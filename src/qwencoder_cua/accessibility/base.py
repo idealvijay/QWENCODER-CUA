@@ -1,0 +1,13 @@
+from __future__ import annotations
+from abc import ABC, abstractmethod
+from qwencoder_cua.models.element import UIElement
+
+class AccessibilityProvider(ABC):
+    @abstractmethod
+    def connect(self) -> None: ...
+    @abstractmethod
+    def disconnect(self) -> None: ...
+    @abstractmethod
+    def enumerate(self, window_id: str | None = None, max_depth: int = 12) -> list[UIElement]: ...
+    @abstractmethod
+    def invoke(self, element: UIElement, action: str, value: str | None = None) -> None: ...

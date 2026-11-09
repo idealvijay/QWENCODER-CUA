@@ -36,5 +36,11 @@ def inspect_tree(max_depth: int = typer.Option(10, min=1, max=30)):
         observation = computer.observe(max_depth=max_depth)
         print(json.dumps(observation.model_dump(mode="json"), indent=2, default=str))
 
+@app.command("portal-status")
+def portal_status():
+    """Probe Wayland portal readiness without requesting desktop permissions."""
+    from qwencoder_cua.drivers.linux.wayland_portal import probe_wayland_portals
+    print(json.dumps(probe_wayland_portals().__dict__, indent=2))
+
 if __name__ == "__main__":
     app()

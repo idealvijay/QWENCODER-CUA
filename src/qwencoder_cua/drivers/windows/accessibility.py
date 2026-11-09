@@ -52,9 +52,15 @@ class WindowsUIAProvider(AccessibilityProvider):
                     actions.append("click")
                 if enabled and control_type in {"edit", "document", "combobox"}:
                     actions.append("set_value")
+                value = None
+                try:
+                    value = str(wrapper.get_value())
+                except Exception:
+                    pass
                 elements.append(UIElement(
                     id=raw_id, role=control_type, name=getattr(info, "name", None) or None,
-                    bounds=bounds, enabled=enabled, visible=bool(getattr(info, "visible", True)),
+                    value=value, bounds=bounds, enabled=enabled,
+                    visible=bool(getattr(info, "visible", True)),
                     focused=bool(getattr(info, "has_keyboard_focus", False)), actions=actions,
                     automation_id=getattr(info, "automation_id", None) or None,
                     class_name=getattr(info, "class_name", None) or None,

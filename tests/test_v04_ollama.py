@@ -163,3 +163,50 @@ def test_planner_shows_ollama_http_error_body(monkeypatch):
         planner.plan_next("Describe the desktop.", observation, [])
 
     assert "image payload is not supported by this model" in str(caught.value)
+
+
+
+def test_planner_discards_whitespace_only_json_keys(monkeypatch):
+    decision = {
+        "done": True,
+        "success": True,
+        "reason": "Paint is open. The canvas, ribbon and drawing controls are visible.",
+        "step": None,
+        " ": " ",
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Describe Paint without changing anything.", observation, [])
+
+    assert result.done
+    assert result.success
+    assert result.step is None
+    assert "canvas" in result.reason
+
+
+def test_planner_still_rejects_meaningful_unknown_json_keys(monkeypatch):
+    decision = {
+        "done": True,
+        "success": True,
+        "reason": "Paint is open.",
+        "step": None,
+        "unrecognized_field": "should remain invalid",
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    with pytest.raises(CUAError, match="does not match the required schema"):
+        planner.plan_next("Describe Paint without changing anything.", observation, [])

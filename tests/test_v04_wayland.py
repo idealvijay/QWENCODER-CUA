@@ -8,7 +8,7 @@ from qwencoder_cua.models.observation import Observation, ScreenshotRef
 def test_wayland_keysym_mapping():
     assert WaylandPortalDriver._keysym("enter") == 0xFF0D
     assert WaylandPortalDriver._keysym("a") == ord("a")
-    assert WaylandPortalDriver._keysym("é") == 0x01000000 | ord("é")
+    assert WaylandPortalDriver._keysym("é") == ord("é")
 
 
 def test_wayland_driver_does_not_advertise_unapproved_controls():

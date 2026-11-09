@@ -8,6 +8,8 @@ import urllib.error
 import urllib.request
 from typing import Any
 
+from pydantic import ValidationError
+
 from qwencoder_cua.agent.plan import TaskDecision, TaskStep
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.models.observation import Observation
@@ -17,9 +19,18 @@ SYSTEM_PROMPT = """You are the planning component of QWENCODER CUA, a local desk
 Return exactly one JSON object matching:
 {"done": boolean, "success": boolean, "reason": string, "step": TaskStep object or null}
 
-When done=true, step must be null. Set success=true only when the user's goal is achieved.
-If blocked, lacking required information, or unable to complete safely, set done=true and success=false.
-Otherwise return exactly one next action.
+The "reason" field is the user-facing completion message. When done=true, step must be null.
+Set success=true only when the user's goal is achieved. If blocked, lacking required information,
+or unable to complete safely, set done=true and success=false with a clear explanation.
+
+IMPORTANT: Some goals are read-only and require no desktop action. For goals asking you to
+describe, identify, inspect, summarize, list, or explain what is currently visible, answer from
+the current screenshot and accessibility context. Return done=true, success=true, put the answer
+in "reason", and set step=null. Do not invent a click, keypress, or other no-op action just to
+complete a read-only request. If the current observation is insufficient, return done=true,
+success=false and explain what is missing.
+
+Otherwise, return exactly one next action and include its expected postcondition.
 Allowed actions:
 - click: x, y
 - type_text: text
@@ -112,6 +123,13 @@ class OllamaTaskPlanner:
                 raise CUAError("Ollama returned no JSON message content.")
             decision_data = json.loads(content)
             return TaskDecision.model_validate(decision_data)
+        except ValidationError as exc:
+            response_content = locals().get("content")
+            response_excerpt = response_content[:600] if isinstance(response_content, str) else "<missing>"
+            raise CUAError(
+                "Ollama returned a task decision that does not match the required schema. "
+                f"Validation details: {exc}. Response excerpt: {response_excerpt}"
+            ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise CUAError(f"Could not reach local Ollama at {self.endpoint}: {exc}") from exc
         except (json.JSONDecodeError, KeyError, TypeError) as exc:

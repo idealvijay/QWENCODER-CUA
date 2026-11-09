@@ -71,7 +71,7 @@ class OllamaTaskPlanner:
     """
 
     def __init__(self, endpoint: str | None = None, model: str | None = None,
-                 timeout_seconds: float = 45.0):
+                 timeout_seconds: float = 45.0, num_ctx: int | None = None):
         self.endpoint = (endpoint or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
         if not self.endpoint.endswith("/api/chat"):
             self.endpoint = self.endpoint + "/chat" if self.endpoint.endswith("/api") else self.endpoint + "/api/chat"
@@ -84,6 +84,13 @@ class OllamaTaskPlanner:
         model_hint = self.model.lower()
         self.include_images = any(token in model_hint for token in
                                   ("minicpm-v", "vision", "-vl", "llava"))
+        raw_num_ctx = num_ctx if num_ctx is not None else os.environ.get("QWENCODER_CUA_NUM_CTX", "20480")
+        try:
+            self.num_ctx = int(raw_num_ctx)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("QWENCODER_CUA_NUM_CTX must be a positive integer.") from exc
+        if not 2048 <= self.num_ctx <= 131072:
+            raise ValueError("num_ctx must be between 2048 and 131072 tokens.")
         self.timeout_seconds = timeout_seconds
 
     def plan_next(self, goal: str, observation: Observation, history: list[Any]) -> TaskDecision:
@@ -114,6 +121,7 @@ class OllamaTaskPlanner:
             "messages": [{"role": "system", "content": SYSTEM_PROMPT}, message],
             "stream": False,
             "format": "json",
+            "options": {"num_ctx": self.num_ctx},
         }
         request = urllib.request.Request(
             self.endpoint,

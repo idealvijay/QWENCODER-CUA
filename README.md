@@ -103,12 +103,15 @@ Set the local endpoint and model for this CMD window:
 ```cmd
 set "OLLAMA_URL=http://127.0.0.1:11434"
 set "QWENCODER_CUA_MODEL=minicpm-v4.5:q4_0"
+set "QWENCODER_CUA_NUM_CTX=20480"
 curl http://127.0.0.1:11434/api/tags
 ```
 
 A JSON response listing models means Ollama is reachable. The Ollama Windows app normally runs its server in the background. If `ollama serve` says the address or port is already in use, another server is probably already listening; do not keep starting more copies. Check the API with the `curl` command above. If it does not respond, launch Ollama from the Windows Start menu and retry.
 
 > **CMD and PowerShell use different syntax:** in CMD use `set "NAME=value"`; in PowerShell use `$env:NAME = "value"`. Do not mix the two.
+
+The planner sends this context size to Ollama through `options.num_ctx`. The default is `20480` tokens so screenshot + UI context can exceed Ollama's 4096-token default. Override it with `QWENCODER_CUA_NUM_CTX` if needed. MiniCPM-V 4.5 Q4_0 is listed with a 40K context window; actual speed and memory use depend on your hardware and Ollama configuration.
 
 ### 3. Run the diagnostic
 

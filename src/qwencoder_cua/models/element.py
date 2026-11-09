@@ -1,8 +1,10 @@
 from pydantic import BaseModel, Field
 from .geometry import Rect
 
+
 class UIElement(BaseModel):
     """Normalized accessibility element. IDs are observation-scoped, not durable selectors."""
+
     id: str
     role: str
     name: str | None = None
@@ -13,6 +15,7 @@ class UIElement(BaseModel):
     focused: bool = False
     actions: list[str] = Field(default_factory=list)
     parent_id: str | None = None
+    parent_name: str | None = None
     automation_id: str | None = None
     class_name: str | None = None
     native_id: str | None = None

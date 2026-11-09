@@ -1,111 +1,101 @@
 # QWENCODER CUA Driver
 
-**Version 0.2.0** — local-first, Python-first desktop automation for Windows and Linux.
+**Version 0.3.0** — local-first Python desktop automation for Windows and Linux.
 Hybrid strategy: accessibility semantics first, screenshot/coordinate interaction as fallback.
 
-## What's new in v0.2
+## v0.3 highlights
 
-- Windows UI Automation adapter using `pywinauto` (`backend="uia"`).
-- Linux AT-SPI adapter using `pyatspi` for accessible application trees.
-- Unified `observe()` returns screenshot, active window, windows, and normalized UI elements.
-- Observation-scoped element IDs with TTL; stale IDs fail closed and require a fresh observation.
-- Semantic operations: `click_element`, `focus_element`, `set_element_value`.
-- Graceful fallback: if the accessibility service or bindings are missing, visual screenshot/input still work.
-- CLI `inspect` emits a JSON observation; `doctor` checks platform prerequisites.
+- Windows UI Automation through pywinauto and Linux AT-SPI accessibility trees.
+- Semantic selectors to find controls again after a UI refresh.
+- Ambiguous and empty selectors fail closed; no guessing between similarly named controls.
+- `act_and_verify()` returns structured results separating input invocation from observed success.
+- Postconditions for element presence/absence, values and active-window title.
+- Wayland XDG portal readiness diagnostics via `qwencoder-cua portal-status`.
 
-## Platform support matrix
+## Platform status
 
 | Capability | Windows 10/11 | Rocky Linux X11 | Rocky Linux Wayland |
 |---|---:|---:|---:|
-| Screenshot | Yes | Yes | Not implemented |
-| Window enumeration/focus | Yes | Yes (backend dependent) | Not implemented |
-| Coordinate mouse/keyboard | Yes | Yes (XTest) | Not implemented |
-| Accessibility tree | UIA | AT-SPI | AT-SPI tree may work; global input/capture not implemented |
-| Semantic click/value | UIA | AT-SPI | Not guaranteed; no portal input implementation |
+| Screenshot and coordinate input | Yes | Yes | Not implemented |
+| Accessibility tree | UIA | AT-SPI | AT-SPI may be available |
+| Semantic actions | UIA | AT-SPI | Depends on app AT-SPI support |
+| Re-identification and verification | Yes | Yes | If accessibility tree is available |
+| Portal readiness probe | N/A | N/A | Yes |
+| Portal screen capture/input stream | N/A | N/A | Not implemented in v0.3 |
 
-Wayland intentionally does not use X11 injection as a fallback. Portal capture/input require user consent and a separate adapter; they are a later milestone. AT-SPI availability depends on desktop environment, service state, and distro packaging.
+Wayland diagnostics do not start a ScreenCast/RemoteDesktop session or bypass the consent dialog. Actual portal capture and PipeWire streaming remain future work. The Linux visual backend in this release targets X11 only.
 
-## Requirements
+## Requirements and installation
 
-- Python 3.11+
-- Windows 10/11 or Rocky Linux with a logged-in graphical desktop.
-- X11 on Linux for current screenshot and coordinate-input backend.
-- AT-SPI service/bindings for Linux semantic element discovery.
+Python 3.11+ and a logged-in desktop session.
 
-## Windows installation (PowerShell)
+### Windows PowerShell
 
 ```powershell
-git clone <your-repository-url> QWENCODER-CUA
-cd QWENCODER-CUA
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-python -m pip install -e ".[windows,dev]"
+pip install -e ".[windows,dev]"
 python scripts/doctor.py
 pytest -q
 ```
 
-## Rocky Linux installation
-
-Package names vary by Rocky release and enabled repositories. Start with:
+### Rocky Linux
 
 ```bash
-sudo dnf install -y python3.11 python3.11-devel gcc libX11 libXtst
-# AT-SPI packages (availability depends on enabled repos):
-sudo dnf install -y at-spi2-core
-# If available in your configured repositories:
-sudo dnf install -y python3-pyatspi
-```
-
-Then:
-
-```bash
+sudo dnf install -y python3.11 python3.11-devel gcc libX11 libXtst at-spi2-core
+# Install distribution-provided pyatspi bindings if available.
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-python -m pip install -e ".[linux,dev]"
+pip install -e ".[linux,dev]"
 python scripts/doctor.py
 pytest -q
 ```
 
-If `python3-pyatspi` is unavailable, use the distribution's supported AT-SPI Python binding package or a desktop Python environment that can import `pyatspi`. Do not assume `pip install pyatspi` is supported.
+AT-SPI Python bindings are commonly supplied by the Linux distribution rather than PyPI. Install the supported distro package and ensure at-spi2-core is running.
 
 ## Quick start
 
 ```python
-from qwencoder_cua import Computer
+from qwencoder_cua import Computer, ElementSelector
 
 with Computer() as cua:
-    obs = cua.observe()
-    print(obs.platform, obs.active_window)
-    print("accessible elements:", len(obs.elements))
-    for element in obs.elements[:20]:
-        print(element.id, element.role, element.name, element.bounds)
+    observation = cua.observe()
+    print(observation.platform, observation.active_window)
+    print("accessible elements:", len(observation.elements))
+
+    save = cua.find_element(ElementSelector(
+        role="button", name="Save", automation_id="saveBtn"
+    ))
+    result = cua.act_and_verify(
+        save.id,
+        "click",
+        {"element_present": {"role": "text", "name": "Saved"}},
+        timeout=4.0,
+    )
+    print(result.success, result.verified, result.verification)
 ```
 
-Semantic actions use IDs from the latest observation only:
+Re-identify a target after UI changes:
 
 ```python
-with Computer() as cua:
-    obs = cua.observe()
-    button = next(e for e in obs.elements if e.role in {"button"} and e.name == "OK")
-    cua.click_element(button.id)
+fresh_save = cua.reidentify({
+    "role": "button", "name": "Save", "automation_id": "saveBtn"
+})
+cua.click_element(fresh_save.id)
 ```
 
-To set an editable field:
+Supported expectation examples:
 
 ```python
-field = next(e for e in obs.elements if e.role in {"edit", "entry", "text"})
-cua.set_element_value(field.id, "hello")
+{"element_absent": {"role": "dialog", "name": "Confirm"}}
+{"element_present": {"role": "text", "name": "Saved"}}
+{"element_value": {"selector": {"role": "edit", "automation_id": "filename"}, "equals": "scene.usd"}}
+{"active_window_title_contains": "Houdini"}
 ```
 
-Fallback to visual coordinates when the application exposes no accessibility metadata:
-
-```python
-cua.click(420, 280)
-cua.type_text("hello")
-cua.press_key("enter")
-```
+`success` means the provider accepted the input action. `verified` means the postcondition was observed; callers should not treat an unverified action as complete.
 
 ## CLI
 
@@ -115,22 +105,13 @@ qwencoder-cua doctor
 qwencoder-cua screenshot --output desktop.png
 qwencoder-cua windows
 qwencoder-cua inspect --max-depth 10
+qwencoder-cua portal-status
 ```
 
-## Architecture
+## Safety
 
-- `models/`: typed contracts for observations, windows, geometry and UI elements.
-- `core/`: platform driver protocol, registry and public facade.
-- `accessibility/`: provider contract and expiring element token store.
-- `drivers/windows/`: Win32 visual/input backend plus UIA accessibility provider.
-- `drivers/linux/`: X11 visual/input backend plus AT-SPI provider.
-- `execution/`: action policies and safety primitives.
-- `tests/`: OS-independent contract and token lifecycle tests.
-
-## Safety model
-
-- Runs in the logged-in user's desktop session; no service/daemon or remote control server.
-- Accessibility IDs are ephemeral and expire; re-observe before acting after UI changes.
-- No hidden/background input is claimed.
-- The library does not bypass OS permission prompts or Wayland consent boundaries.
-- Coordinate and semantic actions are powerful: use only on machines and applications you are authorized to control.
+- Local process only; no network listener or cloud dependency.
+- Element IDs expire and are invalidated on every observation.
+- Ambiguous semantic selectors are rejected rather than guessed.
+- OS permission prompts remain under user control.
+- UI content is untrusted; never pass UI text directly to shell execution or privileged commands.

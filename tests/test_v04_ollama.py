@@ -16,6 +16,7 @@ def test_planner_uses_local_ollama_defaults(monkeypatch):
     monkeypatch.delenv("OLLAMA_URL", raising=False)
     monkeypatch.delenv("MODEL", raising=False)
     monkeypatch.delenv("QWENCODER_CUA_MODEL", raising=False)
+    monkeypatch.delenv("QWENCODER_CUA_NUM_CTX", raising=False)
     planner = OllamaTaskPlanner()
     assert planner.endpoint == "http://127.0.0.1:11434/api/chat"
     assert planner.model == "minicpm-v4.5:q4_0"

@@ -30,16 +30,31 @@ Wayland does not use X11 injection as a fallback. The user can grant screen shar
 
 Python 3.11+ and a logged-in interactive desktop session.
 
-### Windows PowerShell
+### Windows 10/11 — PowerShell
+
+Open PowerShell, clone the repository, and install the Windows extras:
 
 ```powershell
+git clone https://github.com/idealvijay/QWENCODER-CUA.git
+cd QWENCODER-CUA
+
 py -3.11 -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
-pip install -e ".[windows,dev]"
+python -m pip install -e ".[windows,dev]"
+
 python scripts/doctor.py
 pytest -q
 ```
+
+If PowerShell blocks the virtual-environment activation script, allow scripts for this terminal only, then activate again:
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\.venv\Scripts\Activate.ps1
+```
+
+Keep this PowerShell window open with `.venv` activated when running the CLI.
 
 ### Rocky Linux X11
 
@@ -108,12 +123,37 @@ with Computer() as cua:
 
 ## Closed-loop local agent
 
-Install and start Ollama locally, then make a vision-capable model available. The default planner model is `minicpm-v4.5:q4_0`; set `QWENCODER_CUA_MODEL` or `MODEL` to choose another model that supports the supplied screenshot images. `OLLAMA_URL` defaults to `http://127.0.0.1:11434`.
+Install Ollama for your operating system and make sure its local server is running. The default planner model is `minicpm-v4.5:q4_0`, a vision-capable model that can receive the current desktop screenshot. `OLLAMA_URL` defaults to `http://127.0.0.1:11434`. The environment variables below apply to the current terminal session.
+
+### Windows 10/11 — PowerShell
+
+Run these commands in the same PowerShell window where the virtual environment is activated:
+
+```powershell
+ollama pull minicpm-v4.5:q4_0
+
+$env:OLLAMA_URL = "http://127.0.0.1:11434"
+$env:QWENCODER_CUA_MODEL = "minicpm-v4.5:q4_0"
+
+# Confirm the driver and local dependencies
+qwencoder-cua doctor
+qwencoder-cua windows
+qwencoder-cua screenshot --output .\desktop.png
+qwencoder-cua inspect --max-depth 10
+
+# Start with a small, non-destructive task in the foreground application
+qwencoder-cua run-goal "Inspect the currently open application and identify its main window and visible controls. Do not change anything."
+```
+
+To try it with Paint or Photoshop, open the application yourself first, leave it in the foreground, then run `qwencoder-cua run-goal "…"`. QWENCODER CUA v0.4 does not launch applications on your behalf. It supports screenshot observation, UI Automation where exposed, mouse clicks, keyboard input, text entry and scrolling. It does **not** yet provide drag/brush-stroke actions or a dedicated art-generation workflow.
+
+### Rocky Linux — Bash
 
 ```bash
 ollama pull minicpm-v4.5:q4_0
 export OLLAMA_URL=http://127.0.0.1:11434
 export QWENCODER_CUA_MODEL=minicpm-v4.5:q4_0
+qwencoder-cua doctor
 qwencoder-cua run-goal "Open the settings window and locate the display scale option"
 ```
 

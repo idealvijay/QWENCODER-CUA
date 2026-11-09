@@ -1,33 +1,34 @@
 # QWENCODER CUA Driver
 
-**Version 0.3.0** — local-first Python desktop automation for Windows and Linux.
-Hybrid strategy: accessibility semantics first, screenshot/coordinate interaction as fallback.
+**Version 0.4.0** — local-first Python desktop automation for Windows and Linux.
+Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
-## v0.3 highlights
+## v0.4 highlights
 
-- Windows UI Automation through pywinauto and Linux AT-SPI accessibility trees.
-- Semantic selectors to find controls again after a UI refresh.
-- Ambiguous and empty selectors fail closed; no guessing between similarly named controls.
-- `act_and_verify()` returns structured results separating input invocation from observed success.
-- Postconditions for element presence/absence, values and active-window title.
-- Wayland XDG portal readiness diagnostics via `qwencoder-cua portal-status`.
+- **Wayland portal backend:** starts an XDG RemoteDesktop session, requests monitor sharing through ScreenCast, and uses the restricted PipeWire FD returned by the portal.
+- **Portal-based input:** keyboard and pointer events are sent only for device classes the user approved in the desktop consent dialog.
+- **PipeWire screenshots:** GStreamer `pipewiresrc` captures a frame from the portal-authorized stream.
+- **Closed-loop task runner:** observe → ask planner for one next action → act → verify → observe again.
+- **Local Ollama planner:** structured one-step decisions, optional screenshot input, accessibility-tree context, and `OLLAMA_URL` / `MODEL` configuration.
+- **Safety limits:** action allow-list, max steps/runtime/text size, mandatory postconditions, and per-step user approval for consequential actions.
+- **Visual postconditions:** compare before/after screenshots using `screen_changed` when an accessible state assertion is unavailable.
 
 ## Platform status
 
 | Capability | Windows 10/11 | Rocky Linux X11 | Rocky Linux Wayland |
 |---|---:|---:|---:|
-| Screenshot and coordinate input | Yes | Yes | Not implemented |
-| Accessibility tree | UIA | AT-SPI | AT-SPI may be available |
-| Semantic actions | UIA | AT-SPI | Depends on app AT-SPI support |
-| Re-identification and verification | Yes | Yes | If accessibility tree is available |
-| Portal readiness probe | N/A | N/A | Yes |
-| Portal screen capture/input stream | N/A | N/A | Not implemented in v0.3 |
+| Screenshot | Yes | Yes | Yes, with portal + GStreamer |
+| Coordinate mouse / keyboard | Yes | XTest backend | Portal Notify methods, consent-gated |
+| Accessibility tree | UI Automation | AT-SPI | AT-SPI, if exposed by the desktop/apps |
+| Semantic click / value | UIA | AT-SPI | AT-SPI, when app supports it |
+| Element re-identification | Yes | Yes | When AT-SPI tree is available |
+| Task runner + verification | Yes | Yes | Yes, subject to granted portal capabilities |
 
-Wayland diagnostics do not start a ScreenCast/RemoteDesktop session or bypass the consent dialog. Actual portal capture and PipeWire streaming remain future work. The Linux visual backend in this release targets X11 only.
+Wayland does not use X11 injection as a fallback. The user can grant screen sharing without granting keyboard or pointer access; capabilities reflect the actual consent response. Window enumeration/focus is not implemented through the RemoteDesktop portal.
 
 ## Requirements and installation
 
-Python 3.11+ and a logged-in desktop session.
+Python 3.11+ and a logged-in interactive desktop session.
 
 ### Windows PowerShell
 
@@ -40,11 +41,12 @@ python scripts/doctor.py
 pytest -q
 ```
 
-### Rocky Linux
+### Rocky Linux X11
 
 ```bash
-sudo dnf install -y python3.11 python3.11-devel gcc libX11 libXtst at-spi2-core
-# Install distribution-provided pyatspi bindings if available.
+sudo dnf install -y python3.11 python3.11-devel gcc libX11 libXtst
+# Install distribution-provided AT-SPI bindings if available.
+sudo dnf install -y at-spi2-core
 python3.11 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
@@ -53,9 +55,36 @@ python scripts/doctor.py
 pytest -q
 ```
 
-AT-SPI Python bindings are commonly supplied by the Linux distribution rather than PyPI. Install the supported distro package and ensure at-spi2-core is running.
+### Rocky Linux Wayland
 
-## Quick start
+Package names vary between Rocky releases and enabled repositories. Install the desktop portal, PipeWire, the GStreamer PipeWire source plugin, and GLib D-Bus tools from your distribution's supported repositories. Typical package names include:
+
+```bash
+sudo dnf install -y xdg-desktop-portal pipewire pipewire-utils   gstreamer1-tools gstreamer1-plugins-base gstreamer1-plugins-good   gstreamer1-plugin-pipewire
+```
+
+Then install the Python extra:
+
+```bash
+python3.11 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+pip install -e ".[wayland,dev]"
+python scripts/doctor.py
+pytest -q
+```
+
+The exact GStreamer PipeWire plugin package name can differ by repository. `gst-inspect-1.0 pipewiresrc` should succeed before using screen capture. If AT-SPI is wanted as well, install the distro's `pyatspi` binding and `at-spi2-core`.
+
+## Wayland consent and runtime
+
+Entering `with Computer() as cua` on a Wayland session starts the portal request. The desktop environment displays its own sharing dialog. The user chooses which monitor/window and input devices to grant. QWENCODER does not bypass or automate that dialog.
+
+The driver requests pointer and keyboard devices plus one monitor stream. If input devices are declined but a screen stream is approved, screenshots remain available while the denied input methods raise an explicit error.
+
+Capture is performed through GStreamer's PipeWire source using the portal-provided PipeWire remote FD and stream target. No unrestricted PipeWire daemon capture is used.
+
+## Quick start: observe and act
 
 ```python
 from qwencoder_cua import Computer, ElementSelector
@@ -68,34 +97,61 @@ with Computer() as cua:
     save = cua.find_element(ElementSelector(
         role="button", name="Save", automation_id="saveBtn"
     ))
-    result = cua.act_and_verify(
+    outcome = cua.act_and_verify(
         save.id,
         "click",
         {"element_present": {"role": "text", "name": "Saved"}},
         timeout=4.0,
     )
-    print(result.success, result.verified, result.verification)
+    print(outcome.success, outcome.verified, outcome.verification)
 ```
 
-Re-identify a target after UI changes:
+## Closed-loop local agent
+
+Install and start Ollama locally, then make a vision-capable model available. The default planner model is `minicpm-v4.5:q4_0`; set `QWENCODER_CUA_MODEL` or `MODEL` to choose another model that supports the supplied screenshot images. `OLLAMA_URL` defaults to `http://127.0.0.1:11434`.
+
+```bash
+ollama pull minicpm-v4.5:q4_0
+export OLLAMA_URL=http://127.0.0.1:11434
+export QWENCODER_CUA_MODEL=minicpm-v4.5:q4_0
+qwencoder-cua run-goal "Open the settings window and locate the display scale option"
+```
+
+The planner returns one structured action at a time. The runner takes a fresh observation after the action, checks the requested postcondition, and only then asks the planner for the next step. Consequential steps marked `approval_required` prompt in the CLI and default to denied.
+
+### Planner API
 
 ```python
-fresh_save = cua.reidentify({
-    "role": "button", "name": "Save", "automation_id": "saveBtn"
-})
-cua.click_element(fresh_save.id)
+from qwencoder_cua import Computer, OllamaTaskPlanner, TaskPolicy, TaskRunner
+
+with Computer() as cua:
+    result = TaskRunner(
+        cua,
+        TaskPolicy(max_steps=10, max_runtime_seconds=90),
+    ).run(
+        "Find the Save button and confirm the document is saved",
+        OllamaTaskPlanner(),
+    )
+    print(result.success, result.status, result.message)
 ```
 
-Supported expectation examples:
+### Execute a reviewed JSON plan
+
+```bash
+qwencoder-cua run-plan ./my-plan.json --max-steps 8
+```
+
+Each plan step must declare an expected postcondition. Supported assertions:
 
 ```python
 {"element_absent": {"role": "dialog", "name": "Confirm"}}
 {"element_present": {"role": "text", "name": "Saved"}}
 {"element_value": {"selector": {"role": "edit", "automation_id": "filename"}, "equals": "scene.usd"}}
 {"active_window_title_contains": "Houdini"}
+{"screen_changed": {"min_fraction": 0.01}}
 ```
 
-`success` means the provider accepted the input action. `verified` means the postcondition was observed; callers should not treat an unverified action as complete.
+`screen_changed` is a visual-difference signal, not proof of semantic success. Prefer accessible state assertions when the application exposes them.
 
 ## CLI
 
@@ -106,12 +162,14 @@ qwencoder-cua screenshot --output desktop.png
 qwencoder-cua windows
 qwencoder-cua inspect --max-depth 10
 qwencoder-cua portal-status
+qwencoder-cua run-plan ./my-plan.json
+qwencoder-cua run-goal "Find the Save button"
 ```
 
-## Safety
+## Safety model
 
-- Local process only; no network listener or cloud dependency.
-- Element IDs expire and are invalidated on every observation.
-- Ambiguous semantic selectors are rejected rather than guessed.
-- OS permission prompts remain under user control.
-- UI content is untrusted; never pass UI text directly to shell execution or privileged commands.
+- Local Ollama endpoint by default; no hosted model or remote control service is required.
+- No shell, Python execution, app-launch, or arbitrary tool-call action exists in the task plan schema.
+- The runner enforces action allow-lists, step/runtime/text limits, required postconditions, and explicit approval gates.
+- Wayland input/capture uses only the session and device permissions granted by the desktop portal.
+- UI labels, values, screenshots and model output are untrusted input. Never pass them to shell execution or privileged code.

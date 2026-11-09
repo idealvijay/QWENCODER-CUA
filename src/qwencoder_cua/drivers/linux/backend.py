@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import platform
+
 from qwencoder_cua.core.exceptions import DriverUnavailableError, UnsupportedOperationError
 from qwencoder_cua.core.registry import detect_linux_session
 from qwencoder_cua.models.capabilities import DriverCapabilities
@@ -23,7 +25,6 @@ class LinuxDriver(BaseDriver):
         return DriverCapabilities()
 
     def connect(self):
-        import platform
         if platform.system() != "Linux":
             raise DriverUnavailableError("LinuxDriver can only run on Linux.")
         if self.session_type == "x11":
@@ -31,10 +32,10 @@ class LinuxDriver(BaseDriver):
             self._backend.connect()
             return
         if self.session_type == "wayland":
-            raise UnsupportedOperationError(
-                "Wayland session detected. XDG Desktop Portal/PipeWire adapter is planned "
-                "but not implemented in this initial build. No global input fallback attempted."
-            )
+            from qwencoder_cua.drivers.linux.wayland.backend import WaylandPortalDriver
+            self._backend = WaylandPortalDriver()
+            self._backend.connect()
+            return
         raise DriverUnavailableError(
             "No supported graphical session detected. Check DISPLAY or WAYLAND_DISPLAY "
             "and XDG_SESSION_TYPE."
@@ -50,12 +51,29 @@ class LinuxDriver(BaseDriver):
             raise RuntimeError("Linux driver is not connected.")
         return getattr(self._backend, method)(*args, **kwargs)
 
-    def screenshot(self, output=None): return self._delegate("screenshot", output)
-    def get_windows(self): return self._delegate("get_windows")
-    def get_active_window(self): return self._delegate("get_active_window")
-    def focus_window(self, window_id): return self._delegate("focus_window", window_id)
-    def click(self, x, y, button="left"): return self._delegate("click", x, y, button)
-    def move(self, x, y): return self._delegate("move", x, y)
-    def scroll(self, dx=0, dy=0): return self._delegate("scroll", dx, dy)
-    def type_text(self, text): return self._delegate("type_text", text)
-    def press_key(self, key): return self._delegate("press_key", key)
+    def screenshot(self, output=None):
+        return self._delegate("screenshot", output)
+
+    def get_windows(self):
+        return self._delegate("get_windows")
+
+    def get_active_window(self):
+        return self._delegate("get_active_window")
+
+    def focus_window(self, window_id):
+        return self._delegate("focus_window", window_id)
+
+    def click(self, x, y, button="left"):
+        return self._delegate("click", x, y, button)
+
+    def move(self, x, y):
+        return self._delegate("move", x, y)
+
+    def scroll(self, dx=0, dy=0):
+        return self._delegate("scroll", dx, dy)
+
+    def type_text(self, text):
+        return self._delegate("type_text", text)
+
+    def press_key(self, key):
+        return self._delegate("press_key", key)

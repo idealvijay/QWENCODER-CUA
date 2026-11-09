@@ -136,6 +136,14 @@ class OllamaTaskPlanner:
             if not isinstance(content, str):
                 raise CUAError("Ollama returned no JSON message content.")
             decision_data = json.loads(content)
+            # Vision models may emit a whitespace-only JSON key as formatting noise.
+            # Discard only blank keys; keep rejecting all meaningful unknown fields.
+            if isinstance(decision_data, dict):
+                decision_data = {
+                    key: value
+                    for key, value in decision_data.items()
+                    if not (isinstance(key, str) and not key.strip())
+                }
             # Some local models attach an action even after declaring the task complete.
             # A completed/blocked decision must never dispatch that stray action.
             if (

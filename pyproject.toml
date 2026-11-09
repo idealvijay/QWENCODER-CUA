@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qwencoder-cua"
-version = "0.4.0"
-description = "Local-first computer-use runtime with consent-aware Wayland control and verified task planning"
+version = "0.5.0"
+description = "Local-first computer-use runtime with verified task planning and creative pointer paths"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

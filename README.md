@@ -1,9 +1,9 @@
 # QWENCODER CUA Driver
 
-**Version 0.4.0** — local-first Python desktop automation for Windows and Linux.
+**Version 0.5.0** — local-first Python desktop automation for Windows and Linux.
 Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
-## v0.4 highlights
+## v0.5 highlights
 
 - **Wayland portal backend:** starts an XDG RemoteDesktop session, requests monitor sharing through ScreenCast, and uses the restricted PipeWire FD returned by the portal.
 - **Portal-based input:** keyboard and pointer events are sent only for device classes the user approved in the desktop consent dialog.
@@ -12,6 +12,10 @@ Hybrid perception uses accessibility semantics when available and screenshots as
 - **Local Ollama planner:** structured one-step decisions, optional screenshot input, accessibility-tree context, and `OLLAMA_URL` / `MODEL` configuration.
 - **Safety limits:** action allow-list, max steps/runtime/text size, mandatory postconditions, and per-step user approval for consequential actions.
 - **Visual postconditions:** compare before/after screenshots using `screen_changed` when an accessible state assertion is unavailable.
+- **Creative pointer input:** held-button mouse input, straight-line drags and sampled multi-waypoint paths on Windows, Linux X11 and consent-approved Linux Wayland sessions.
+- **Atomic strokes:** each drag/path attempts to release the pointer button even when movement fails.
+- **Bounded drawing plans:** waypoint count, duration and screenshot-coordinate bounds are validated before input is sent.
+- **Shape path helpers:** generate circle and rectangle polylines for drawing with the currently selected application tool.
 
 ## Platform status
 
@@ -19,6 +23,7 @@ Hybrid perception uses accessibility semantics when available and screenshots as
 |---|---:|---:|---:|
 | Screenshot | Yes | Yes | Yes, with portal + GStreamer |
 | Coordinate mouse / keyboard | Yes | XTest backend | Portal Notify methods, consent-gated |
+| Held mouse / drag / draw path | Yes | XTest backend | Portal pointer consent required |
 | Accessibility tree | UI Automation | AT-SPI | AT-SPI, if exposed by the desktop/apps |
 | Semantic click / value | UIA | AT-SPI | AT-SPI, when app supports it |
 | Element re-identification | Yes | Yes | When AT-SPI tree is available |
@@ -185,7 +190,7 @@ ollama show minicpm-v4.5:q4_0
 
 The application will show Ollama's detailed HTTP error after the HTTP-error diagnostic fix is installed. Use that message to distinguish an unsupported request, image-processing issue, or model/runtime problem; do not treat every HTTP 400 as a connection failure.
 
-**v0.4 limitations:** QWENCODER CUA can observe the screen and use supported mouse, keyboard, text, and accessibility actions. It does not yet provide dedicated drag-and-drop, continuous brush strokes, or artwork-generation actions. It also does not launch Paint or Photoshop automatically; open the target application before running a task.
+**Current limitations:** QWENCODER CUA does not yet provide native PSD layer/object editing, application-specific document APIs, or image-generation models. Generic drags and brush strokes are now available. It also does not launch Paint or Photoshop automatically; open the target application before running a task.
 
 ---
 
@@ -254,6 +259,49 @@ with Computer() as cua:
     print(outcome.success, outcome.verified, outcome.verification)
 ```
 
+## Creative input: drawing paths and strokes
+
+QWENCODER CUA 0.5 adds low-level, application-independent drawing primitives. These send pointer events to the **currently focused application**; they do not select a Paint/Photoshop brush or colour automatically. Select the desired tool and colour in the target application first, and use coordinates measured from the desktop screenshot.
+
+### Python API
+
+```python
+from qwencoder_cua import Computer
+from qwencoder_cua.creative import circle_path, rectangle_path
+
+with Computer() as cua:
+    observation = cua.observe()
+    print("Desktop size:", observation.screenshot.width, observation.screenshot.height)
+
+    # Example coordinates only: replace these with positions inside your canvas.
+    cua.draw_path(
+        circle_path(center_x=900, center_y=500, radius=90, segments=48),
+        button="left",
+        duration_seconds=1.5,
+    )
+
+    cua.draw_path(
+        rectangle_path(left=700, top=350, width=240, height=160),
+        duration_seconds=1.0,
+    )
+```
+
+The lower-level `Computer` methods are `move(x, y)`, `mouse_down(x, y, button)`, `mouse_up(button)`, `drag(start_x, start_y, end_x, end_y, ...)` and `draw_path(points, ...)`. Prefer `drag` or `draw_path` for planned strokes: they perform press/move/release as one operation, and the shared path executor releases the button in a `finally` block.
+
+### Local agent drawing actions
+
+The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. A path contains 2–64 absolute desktop-pixel waypoints, and its duration is limited to 10 seconds. QWENCODER checks every waypoint against the captured screenshot dimensions before dispatch. A path should use a `screen_changed` postcondition (for example, `{"screen_changed": {"min_fraction": 0.001}}`) so the runner checks whether the canvas visibly changed.
+
+Example request after opening Paint, selecting a brush and colour, and placing Paint in the foreground:
+
+```cmd
+qwencoder-cua run-goal "Draw a red circle near the centre of the blank Paint canvas. Use a smooth closed path and verify that the canvas changes."
+```
+
+The agent is not Photoshop- or Paint-specific. It uses the visible interface to select tools where possible, then sends generic pointer paths. Layer management, native PSD object creation, text editing and app-specific shape APIs are not part of this first creative-input release. Use a test canvas or a new blank document first; generic pointer paths operate on the current foreground app and are not undo-aware.
+
+---
+
 ## Closed-loop local agent
 
 Install Ollama for your operating system and make sure its local server is running. The default planner model is `minicpm-v4.5:q4_0`, a vision-capable model that can receive the current desktop screenshot. `OLLAMA_URL` defaults to `http://127.0.0.1:11434`. The environment variables below apply to the current terminal session.
@@ -278,7 +326,7 @@ qwencoder-cua inspect --max-depth 10
 qwencoder-cua run-goal "Inspect the currently open application and identify its main window and visible controls. Do not change anything."
 ```
 
-To try it with Paint or Photoshop, open the application yourself first, leave it in the foreground, then run `qwencoder-cua run-goal "…"`. QWENCODER CUA v0.4 does not launch applications on your behalf. It supports screenshot observation, UI Automation where exposed, mouse clicks, keyboard input, text entry and scrolling. It does **not** yet provide drag/brush-stroke actions or a dedicated art-generation workflow.
+To try it with Paint or Photoshop, open the application yourself first, leave it in the foreground, then run `qwencoder-cua run-goal "…"`. QWENCODER CUA v0.5 does not launch applications on your behalf. It supports screenshot observation, UI Automation where exposed, mouse clicks, keyboard input, text entry, scrolling, dragging and sampled drawing paths. It does not yet provide native PSD layer/object editing or image-generation models.
 
 ### Rocky Linux — Bash
 
@@ -339,6 +387,7 @@ qwencoder-cua inspect --max-depth 10
 qwencoder-cua portal-status
 qwencoder-cua run-plan ./my-plan.json
 qwencoder-cua run-goal "Find the Save button"
+qwencoder-cua run-goal "Draw a red circle on the current canvas and verify the visible change"
 ```
 
 ## Safety model

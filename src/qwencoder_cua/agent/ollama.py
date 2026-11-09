@@ -45,6 +45,16 @@ Allowed actions:
 - click_element: selector
 - focus_element: selector
 - set_element_value: selector and value
+- move_mouse: x, y
+- drag: start_x, start_y, end_x, end_y, optional button and duration_seconds
+- draw_path: points (2-64 {x, y} waypoints), optional button and duration_seconds
+
+Pointer coordinates are absolute pixels in the current screenshot, with (0, 0) at its
+top-left. The user observation includes screenshot width and height; never target pixels
+outside that rectangle. For a Paint/Photoshop stroke, identify the drawable canvas first,
+keep every waypoint inside that canvas, and use draw_path (one atomic press/move/release).
+Use drag for a straight-line stroke or dragging a selection. A draw_path or drag action
+must request a screen_changed postcondition, normally with min_fraction 0.001.
 
 Every step MUST include a non-empty expected postcondition. Supported postconditions:
 - {"element_absent": {"role": "...", "name": "..."}}
@@ -109,6 +119,10 @@ class OllamaTaskPlanner:
             "session_type": observation.session_type,
             "active_window": observation.active_window.model_dump() if observation.active_window else None,
             "accessibility_available": observation.accessibility_available,
+            "screen_size": (
+                {"width": observation.screenshot.width, "height": observation.screenshot.height}
+                if observation.screenshot else None
+            ),
             "accessible_elements": elements,
             "completed_steps": [item.model_dump() for item in history[-12:]],
         }

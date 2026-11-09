@@ -5,11 +5,13 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from qwencoder_cua.models.geometry import Point
 from qwencoder_cua.models.selector import ElementSelector
 
 PlanAction = Literal[
     "click", "type_text", "press_key", "scroll",
     "click_element", "focus_element", "set_element_value",
+    "move_mouse", "drag", "draw_path",
 ]
 
 
@@ -27,14 +29,29 @@ class TaskStep(BaseModel):
     key: str | None = None
     value: str | None = None
     selector: ElementSelector | None = None
+    start_x: int | None = None
+    start_y: int | None = None
+    end_x: int | None = None
+    end_y: int | None = None
+    points: list[Point] | None = Field(default=None, min_length=2, max_length=64)
+    button: Literal["left", "middle", "right"] = "left"
+    duration_seconds: float = Field(default=1.0, gt=0, le=10.0)
     expected: dict = Field(min_length=1)
     approval_required: bool = False
     timeout_seconds: float = Field(default=4.0, gt=0, le=30)
 
     @model_validator(mode="after")
     def validate_action_arguments(self):
-        if self.action == "click" and (self.x is None or self.y is None):
-            raise ValueError("click requires x and y coordinates")
+        if self.action in {"click", "move_mouse"} and (self.x is None or self.y is None):
+            raise ValueError(f"{self.action} requires x and y coordinates")
+        if self.action == "drag" and any(
+            value is None for value in (self.start_x, self.start_y, self.end_x, self.end_y)
+        ):
+            raise ValueError("drag requires start_x, start_y, end_x and end_y")
+        if self.action == "draw_path" and self.points is None:
+            raise ValueError("draw_path requires between 2 and 64 points")
+        if self.action != "draw_path" and self.points is not None:
+            raise ValueError("points are only valid for draw_path")
         if self.action == "scroll" and self.dx == 0 and self.dy == 0:
             raise ValueError("scroll requires a non-zero dx or dy")
         if self.action == "type_text" and self.text is None:

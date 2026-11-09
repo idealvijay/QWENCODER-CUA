@@ -130,6 +130,16 @@ class TaskRunner:
             if step.action == "type_text" and len(step.text or "") > self.policy.max_text_chars:
                 return self._result(plan, False, "failed", results,
                                     "Text exceeds configured length limit.", started)
+            if step.action == "draw_path":
+                if len(step.points or []) > self.policy.max_path_points:
+                    return self._result(plan, False, "failed", results,
+                                        "Drawing path exceeds the configured waypoint limit.", started)
+                if step.duration_seconds > self.policy.max_draw_duration_seconds:
+                    return self._result(plan, False, "failed", results,
+                                        "Drawing duration exceeds the configured limit.", started)
+            if step.action == "drag" and step.duration_seconds > self.policy.max_draw_duration_seconds:
+                return self._result(plan, False, "failed", results,
+                                    "Drag duration exceeds the configured limit.", started)
 
             if step.approval_required and not bool(approve and approve(step, index)):
                 return self._result(
@@ -144,6 +154,16 @@ class TaskRunner:
             before_path, after_path = Path(before_path_str), Path(after_path_str)
             try:
                 before = self.computer.observe(screenshot_path=before_path)
+                bounds_error = self._validate_pointer_bounds(step, before)
+                if bounds_error:
+                    results.append(TaskStepResult(
+                        step_id=step.step_id, action=step.action, dispatched=False,
+                        verified=False, message=bounds_error,
+                        before_observation_id=before.observation_id,
+                    ))
+                    if plan.stop_on_failure:
+                        return self._result(plan, False, "failed", results, bounds_error, started)
+                    continue
                 try:
                     self._dispatch(step)
                 except Exception as exc:
@@ -208,6 +228,18 @@ class TaskRunner:
             self.computer.press_key(step.key)
         elif step.action == "scroll":
             self.computer.scroll(step.dx, step.dy)
+        elif step.action == "move_mouse":
+            self.computer.move(step.x, step.y)
+        elif step.action == "drag":
+            self.computer.drag(
+                step.start_x, step.start_y, step.end_x, step.end_y,
+                button=step.button, duration_seconds=step.duration_seconds,
+            )
+        elif step.action == "draw_path":
+            self.computer.draw_path(
+                [(point.x, point.y) for point in step.points],
+                button=step.button, duration_seconds=step.duration_seconds,
+            )
         elif step.action in {"click_element", "focus_element", "set_element_value"}:
             if not self.computer._provider:
                 raise CUAError("Semantic action requested but accessibility is unavailable.")
@@ -220,6 +252,28 @@ class TaskRunner:
                 self.computer.set_element_value(element.id, step.value)
         else:
             raise CUAError(f"Unsupported action: {step.action}")
+
+    @staticmethod
+    def _validate_pointer_bounds(step: TaskStep, observation: Observation) -> str | None:
+        """Reject pointer/drawing coordinates outside the captured desktop image."""
+        if step.action not in {"move_mouse", "drag", "draw_path"}:
+            return None
+        screenshot = observation.screenshot
+        if not screenshot or not screenshot.width or not screenshot.height:
+            return "Cannot validate pointer coordinates without screenshot dimensions."
+        if step.action == "move_mouse":
+            points = [(step.x, step.y)]
+        elif step.action == "drag":
+            points = [(step.start_x, step.start_y), (step.end_x, step.end_y)]
+        else:
+            points = [(point.x, point.y) for point in (step.points or [])]
+        for x, y in points:
+            if x is None or y is None or not (0 <= x < screenshot.width and 0 <= y < screenshot.height):
+                return (
+                    f"Pointer coordinate ({x}, {y}) is outside the captured desktop "
+                    f"({screenshot.width}x{screenshot.height})."
+                )
+        return None
 
     def _require_connected(self):
         if not getattr(self.computer, "_connected", False):

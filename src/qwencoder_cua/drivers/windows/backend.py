@@ -139,6 +139,19 @@ class WindowsDriver(BaseDriver):
         self._check()
         self._pyautogui.moveTo(x, y)
 
+    def mouse_down(self, x: int, y: int, button="left"):
+        self._check()
+        if button not in {"left", "right", "middle"}:
+            raise ValueError(f"Unsupported mouse button: {button}")
+        self._pyautogui.moveTo(x, y)
+        self._pyautogui.mouseDown(button=button)
+
+    def mouse_up(self, button="left"):
+        self._check()
+        if button not in {"left", "right", "middle"}:
+            raise ValueError(f"Unsupported mouse button: {button}")
+        self._pyautogui.mouseUp(button=button)
+
     def scroll(self, dx=0, dy=0):
         self._check()
         if dx:

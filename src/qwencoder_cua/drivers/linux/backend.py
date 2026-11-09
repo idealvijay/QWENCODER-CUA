@@ -69,6 +69,12 @@ class LinuxDriver(BaseDriver):
     def move(self, x, y):
         return self._delegate("move", x, y)
 
+    def mouse_down(self, x, y, button="left"):
+        return self._delegate("mouse_down", x, y, button)
+
+    def mouse_up(self, button="left"):
+        return self._delegate("mouse_up", button)
+
     def scroll(self, dx=0, dy=0):
         return self._delegate("scroll", dx, dy)
 

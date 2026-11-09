@@ -22,7 +22,8 @@ def version():
 def doctor():
     """Run platform dependency diagnostics."""
     import runpy
-    runpy.run_path(str(Path(__file__).resolve().parents[3] / "scripts" / "doctor.py"))
+    # cli.py is <repo>/src/qwencoder_cua/cli.py, so parents[2] is the repo root.
+    runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "doctor.py"))
 
 
 @app.command()

@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from qwencoder_cua.agent.plan import TaskDecision, TaskStep
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.models.observation import Observation
+from qwencoder_cua.agent.coordinates import planner_image_dimensions
 
 
 SYSTEM_PROMPT = """You are the planning component of QWENCODER CUA, a local desktop automation agent.
@@ -49,12 +50,27 @@ Allowed actions:
 - drag: start_x, start_y, end_x, end_y, optional button and duration_seconds
 - draw_path: points (2-64 {x, y} waypoints), optional button and duration_seconds
 
-Pointer coordinates are absolute pixels in the current screenshot, with (0, 0) at its
-top-left. The user observation includes screenshot width and height; never target pixels
-outside that rectangle. For a Paint/Photoshop stroke, identify the drawable canvas first,
-keep every waypoint inside that canvas, and use draw_path (one atomic press/move/release).
-Use drag for a straight-line stroke or dragging a selection. A draw_path or drag action
-must request a screen_changed postcondition, normally with min_fraction 0.001.
+Pointer coordinates are measured in the resized image shown to you (the
+`screen_size` field), not the full desktop. The runner automatically maps them to desktop
+pixels using `desktop_size`. Keep every point within `screen_size` and inside the drawable
+canvas rectangle; never target the toolbar, ribbon, status bar or title bar as a drawing point.
+
+For drawing tasks, distinguish the canvas from surrounding application chrome. A blank
+white/transparent canvas is normal and is not evidence that a tool or colour is missing.
+The user's statement that the canvas is blank is reliable unless clear visible artwork
+contradicts it. Do not refuse a drawing task because the canvas "does not look empty" unless
+you can identify specific visible marks inside the canvas itself. Ignore colour swatches,
+tool icons, selection handles and other UI elements when assessing whether the canvas contains
+artwork. If the requested tool or colour is not selected, use visible, unambiguous controls to
+select it as normal planner steps; do not ask the user to do this when controls are visible.
+For a circle in Paint, prefer the built-in ellipse shape with no fill and a red outline if those
+controls are visible; otherwise use a closed draw_path. Do not claim a tool or shape is absent
+without checking the screenshot and accessible elements.
+
+For a Paint/Photoshop stroke, identify the drawable canvas first. Use draw_path (one atomic
+press/move/release) for a freehand path; use drag for a straight drag or a native
+ellipse/rectangle tool gesture. A draw_path or drag action must request a screen_changed
+postcondition, normally with min_fraction 0.001.
 
 Every step MUST include a non-empty expected postcondition. Supported postconditions:
 - {"element_absent": {"role": "...", "name": "..."}}
@@ -119,8 +135,16 @@ class OllamaTaskPlanner:
             "session_type": observation.session_type,
             "active_window": observation.active_window.model_dump() if observation.active_window else None,
             "accessibility_available": observation.accessibility_available,
-            "screen_size": (
+            "desktop_size": (
                 {"width": observation.screenshot.width, "height": observation.screenshot.height}
+                if observation.screenshot else None
+            ),
+            "screen_size": (
+                {"width": planner_image_dimensions(
+                    observation.screenshot.width, observation.screenshot.height
+                )[0], "height": planner_image_dimensions(
+                    observation.screenshot.width, observation.screenshot.height
+                )[1]}
                 if observation.screenshot else None
             ),
             "accessible_elements": elements,
@@ -206,7 +230,9 @@ class OllamaTaskPlanner:
             from PIL import Image
             with Image.open(path) as source:
                 image = source.convert("RGB")
-                image.thumbnail((1280, 800))
+                target_size = planner_image_dimensions(*image.size)
+                if image.size != target_size:
+                    image = image.resize(target_size, Image.Resampling.LANCZOS)
                 buffer = io.BytesIO()
                 image.save(buffer, format="JPEG", quality=84, optimize=True)
             return [base64.b64encode(buffer.getvalue()).decode("ascii")]

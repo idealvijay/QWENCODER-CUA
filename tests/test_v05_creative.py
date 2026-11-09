@@ -1,9 +1,13 @@
 from __future__ import annotations
 
+import json
+
 import pytest
 from PIL import Image
 
 from qwencoder_cua.agent import TaskPlan, TaskPolicy, TaskRunner, TaskStep
+from qwencoder_cua.agent.coordinates import planner_image_dimensions
+from qwencoder_cua.agent.ollama import SYSTEM_PROMPT, OllamaTaskPlanner
 from qwencoder_cua.core.driver import BaseDriver
 from qwencoder_cua.core.computer import Computer
 from qwencoder_cua.core.exceptions import UnsupportedOperationError
@@ -11,6 +15,7 @@ from qwencoder_cua.creative import circle_path, rectangle_path
 from qwencoder_cua.models.capabilities import DriverCapabilities
 from qwencoder_cua.models.geometry import Point
 from qwencoder_cua.models.window import WindowInfo
+from qwencoder_cua.models.observation import Observation, ScreenshotRef
 from qwencoder_cua.drivers.linux.wayland.backend import WaylandPortalDriver
 
 
@@ -214,3 +219,89 @@ def test_wayland_pointer_press_requires_user_consent():
     driver = WaylandPortalDriver()
     with pytest.raises(UnsupportedOperationError, match="did not grant pointer control"):
         driver.mouse_down(10, 10, "left")
+
+
+
+def test_task_runner_maps_vision_click_coordinates_to_desktop():
+    class LargeDesktopDriver(RecordingDriver):
+        def screenshot(self, output=None):
+            image = Image.new("RGB", (2000, 1000), "white")
+            if output:
+                image.save(output)
+            return image
+
+    driver = LargeDesktopDriver()
+    plan = TaskPlan(
+        goal="Click the requested point from the planner screenshot",
+        steps=[TaskStep(
+            action="click", x=640, y=320,
+            expected={"active_window_title_contains": "Paint"},
+        )],
+    )
+    with Computer(driver=driver, accessibility=False) as computer:
+        result = TaskRunner(computer).execute(plan, coordinate_space="planner_image")
+
+    assert result.success
+    assert driver.events == [("click", 1000, 500, "left")]
+
+
+def test_fixed_plan_coordinates_remain_native_desktop_pixels():
+    class LargeDesktopDriver(RecordingDriver):
+        def screenshot(self, output=None):
+            image = Image.new("RGB", (2000, 1000), "white")
+            if output:
+                image.save(output)
+            return image
+
+    driver = LargeDesktopDriver()
+    plan = TaskPlan(
+        goal="Click with native desktop coordinates",
+        steps=[TaskStep(
+            action="click", x=1500, y=700,
+            expected={"active_window_title_contains": "Paint"},
+        )],
+    )
+    with Computer(driver=driver, accessibility=False) as computer:
+        result = TaskRunner(computer).execute(plan)
+
+    assert result.success
+    assert driver.events == [("click", 1500, 700, "left")]
+
+
+
+def test_drawing_prompt_trusts_user_blank_canvas_statement():
+    normalized = " ".join(SYSTEM_PROMPT.split())
+    assert "user's statement that the canvas is blank is reliable" in normalized
+    assert "specific visible marks inside the canvas itself" in normalized
+    assert "built-in ellipse shape with no fill and a red outline" in normalized
+
+
+def test_planner_context_matches_resized_image_dimensions(monkeypatch, tmp_path):
+    screenshot_path = tmp_path / "wide-screen.png"
+    Image.new("RGB", (3440, 1440), "white").save(screenshot_path)
+    captured = {}
+
+    decision = {"done": True, "success": True, "reason": "Observed", "step": None}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return type("Response", (), {
+            "__enter__": lambda self: self,
+            "__exit__": lambda self, *_: False,
+            "read": lambda self: json.dumps({
+                "message": {"content": json.dumps(decision)}
+            }).encode("utf-8"),
+        })()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="wide",
+        platform="windows",
+        screenshot=ScreenshotRef(path=str(screenshot_path), width=3440, height=1440),
+    )
+    planner.plan_next("Describe the desktop.", observation, [])
+
+    user_context = json.loads(captured["payload"]["messages"][1]["content"])
+    assert user_context["desktop_size"] == {"width": 3440, "height": 1440}
+    assert user_context["screen_size"] == {"width": 1280, "height": 536}

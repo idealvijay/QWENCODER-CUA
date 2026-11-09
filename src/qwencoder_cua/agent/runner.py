@@ -6,7 +6,7 @@ import time
 from dataclasses import replace
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Callable, Protocol
+from typing import Callable, Literal, Protocol
 from uuid import uuid4
 
 from qwencoder_cua.agent.plan import (
@@ -16,6 +16,8 @@ from qwencoder_cua.agent.policy import TaskPolicy
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.execution.verifier import verify_observation
 from qwencoder_cua.models.observation import Observation
+from qwencoder_cua.agent.coordinates import planner_image_dimensions
+from qwencoder_cua.agent.coordinates import planner_image_dimensions
 
 
 class TaskPlanner(Protocol):
@@ -93,7 +95,9 @@ class TaskRunner:
             wrapped_approval = None
             if approve is not None:
                 wrapped_approval = lambda step, _local_index: approve(step, index)
-            step_result = step_runner.execute(step_plan, approve=wrapped_approval)
+            step_result = step_runner.execute(
+                step_plan, approve=wrapped_approval, coordinate_space="planner_image"
+            )
             history.extend(step_result.steps)
             if not step_result.success:
                 return self._run_result(
@@ -106,8 +110,19 @@ class TaskRunner:
             f"Planner did not finish within the {self.policy.max_steps}-step limit.", started,
         )
 
-    def execute(self, plan: TaskPlan, approve: ApprovalCallback | None = None) -> TaskRunResult:
-        """Execute a fixed structured plan. Each step must verify before the next begins."""
+    def execute(
+        self,
+        plan: TaskPlan,
+        approve: ApprovalCallback | None = None,
+        coordinate_space: Literal["desktop", "planner_image"] = "desktop",
+    ) -> TaskRunResult:
+        """Execute a fixed plan.
+
+        Fixed plans default to native desktop pixels. The closed-loop vision planner
+        explicitly selects planner_image coordinates, which are scaled before dispatch.
+        """
+        if coordinate_space not in {"desktop", "planner_image"}:
+            raise ValueError("coordinate_space must be 'desktop' or 'planner_image'.")
         self._require_connected()
         if not isinstance(plan, TaskPlan):
             plan = TaskPlan.model_validate(plan)
@@ -154,7 +169,7 @@ class TaskRunner:
             before_path, after_path = Path(before_path_str), Path(after_path_str)
             try:
                 before = self.computer.observe(screenshot_path=before_path)
-                bounds_error = self._validate_pointer_bounds(step, before)
+                bounds_error = self._validate_pointer_bounds(step, before, coordinate_space)
                 if bounds_error:
                     results.append(TaskStepResult(
                         step_id=step.step_id, action=step.action, dispatched=False,
@@ -165,7 +180,11 @@ class TaskRunner:
                         return self._result(plan, False, "failed", results, bounds_error, started)
                     continue
                 try:
-                    self._dispatch(step)
+                    dispatch_step = (
+                        self._to_desktop_coordinates(step, before)
+                        if coordinate_space == "planner_image" else step
+                    )
+                    self._dispatch(dispatch_step)
                 except Exception as exc:
                     results.append(TaskStepResult(
                         step_id=step.step_id, action=step.action, dispatched=False,
@@ -254,26 +273,66 @@ class TaskRunner:
             raise CUAError(f"Unsupported action: {step.action}")
 
     @staticmethod
-    def _validate_pointer_bounds(step: TaskStep, observation: Observation) -> str | None:
+    def _validate_pointer_bounds(
+        step: TaskStep,
+        observation: Observation,
+        coordinate_space: Literal["desktop", "planner_image"] = "desktop",
+    ) -> str | None:
         """Reject pointer/drawing coordinates outside the captured desktop image."""
-        if step.action not in {"move_mouse", "drag", "draw_path"}:
+        if step.action not in {"click", "move_mouse", "drag", "draw_path"}:
             return None
         screenshot = observation.screenshot
         if not screenshot or not screenshot.width or not screenshot.height:
             return "Cannot validate pointer coordinates without screenshot dimensions."
-        if step.action == "move_mouse":
+        if coordinate_space == "planner_image":
+            width, height = planner_image_dimensions(screenshot.width, screenshot.height)
+        else:
+            width, height = screenshot.width, screenshot.height
+        if step.action in {"click", "move_mouse"}:
             points = [(step.x, step.y)]
         elif step.action == "drag":
             points = [(step.start_x, step.start_y), (step.end_x, step.end_y)]
         else:
             points = [(point.x, point.y) for point in (step.points or [])]
         for x, y in points:
-            if x is None or y is None or not (0 <= x < screenshot.width and 0 <= y < screenshot.height):
+            if x is None or y is None or not (0 <= x < width and 0 <= y < height):
                 return (
                     f"Pointer coordinate ({x}, {y}) is outside the captured desktop "
-                    f"({screenshot.width}x{screenshot.height})."
+                    f"({width}x{height} {coordinate_space} pixels)."
                 )
         return None
+
+    @staticmethod
+    def _to_desktop_coordinates(step: TaskStep, observation: Observation) -> TaskStep:
+        """Map planner-image pixel coordinates to physical desktop screenshot pixels."""
+        screenshot = observation.screenshot
+        if not screenshot or not screenshot.width or not screenshot.height:
+            return step
+        image_width, image_height = planner_image_dimensions(
+            screenshot.width, screenshot.height
+        )
+        scale_x = screenshot.width / image_width
+        scale_y = screenshot.height / image_height
+
+        def point(x: int, y: int) -> tuple[int, int]:
+            return round(x * scale_x), round(y * scale_y)
+
+        if step.action in {"click", "move_mouse"}:
+            x, y = point(step.x, step.y)
+            return step.model_copy(update={"x": x, "y": y})
+        if step.action == "drag":
+            sx, sy = point(step.start_x, step.start_y)
+            ex, ey = point(step.end_x, step.end_y)
+            return step.model_copy(update={
+                "start_x": sx, "start_y": sy, "end_x": ex, "end_y": ey,
+            })
+        if step.action == "draw_path":
+            mapped = []
+            for item in step.points or []:
+                x, y = point(item.x, item.y)
+                mapped.append(item.model_copy(update={"x": x, "y": y}))
+            return step.model_copy(update={"points": mapped})
+        return step
 
     def _require_connected(self):
         if not getattr(self.computer, "_connected", False):

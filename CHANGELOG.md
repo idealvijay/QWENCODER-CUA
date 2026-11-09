@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.5.1
+- Treat user-provided blank-canvas state as authoritative unless visible marks clearly contradict it.
+- Prefer Paint's ellipse shape with no fill and red outline for circle requests when controls are visible.
+- Align vision-model pointer coordinates with the resized screenshot and map them to desktop pixels.
+- Apply bounds validation and coordinate mapping to click, move, drag and draw-path actions.
+
+
 ## 0.5.0
 - Add held-button mouse input and atomic straight-line drag / multi-waypoint drawing paths.
 - Implement Windows, Linux X11 and consent-gated Wayland pointer press/release adapters.

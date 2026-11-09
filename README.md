@@ -1,6 +1,6 @@
 # QWENCODER CUA Driver
 
-**Version 0.5.0** — local-first Python desktop automation for Windows and Linux.
+**Version 0.5.1** — local-first Python desktop automation for Windows and Linux.
 Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
 ## v0.5 highlights
@@ -261,7 +261,7 @@ with Computer() as cua:
 
 ## Creative input: drawing paths and strokes
 
-QWENCODER CUA 0.5 adds low-level, application-independent drawing primitives. These send pointer events to the **currently focused application**; they do not select a Paint/Photoshop brush or colour automatically. Select the desired tool and colour in the target application first, and use coordinates measured from the desktop screenshot.
+QWENCODER CUA 0.5 adds low-level, application-independent drawing primitives. These send pointer events to the **currently focused application**; they do not select a Paint/Photoshop brush or colour automatically. Select the desired tool and colour in the target application first, and use coordinates measured from the desktop screenshot. The direct Python `Computer` API accepts native desktop screenshot pixels.
 
 ### Python API
 
@@ -290,7 +290,7 @@ The lower-level `Computer` methods are `move(x, y)`, `mouse_down(x, y, button)`,
 
 ### Local agent drawing actions
 
-The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. A path contains 2–64 absolute desktop-pixel waypoints, and its duration is limited to 10 seconds. QWENCODER checks every waypoint against the captured screenshot dimensions before dispatch. A path should use a `screen_changed` postcondition (for example, `{"screen_changed": {"min_fraction": 0.001}}`) so the runner checks whether the canvas visibly changed.
+The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. Planner-produced click and drawing coordinates are measured in the resized image shown to the vision model; the runner maps them to full desktop pixels before dispatch. A path contains 2–64 waypoints, and its duration is limited to 10 seconds. QWENCODER validates against the planner image dimensions. The direct Python `Computer` drawing API uses native desktop screenshot pixels. A path should use a `screen_changed` postcondition (for example, `{"screen_changed": {"min_fraction": 0.001}}`) so the runner checks whether the canvas visibly changed.
 
 Example request after opening Paint, selecting a brush and colour, and placing Paint in the foreground:
 

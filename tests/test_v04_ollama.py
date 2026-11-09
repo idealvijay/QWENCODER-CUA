@@ -1,5 +1,6 @@
 import base64
 import json
+import urllib.error
 from io import BytesIO
 
 import pytest
@@ -106,7 +107,8 @@ def test_planner_reports_invalid_decision_as_cua_error(monkeypatch):
 def test_prompt_explains_target_application_must_be_foreground():
     assert "not the active window" in SYSTEM_PROMPT
     assert "do not invent a click" in SYSTEM_PROMPT
-    assert "bring the target application to the foreground" in SYSTEM_PROMPT
+    normalized_prompt = " ".join(SYSTEM_PROMPT.split())
+    assert "bring the target application to the foreground" in normalized_prompt
 
 
 def test_completed_decision_discards_stray_model_action(monkeypatch):
@@ -136,3 +138,27 @@ def test_completed_decision_discards_stray_model_action(monkeypatch):
     assert not result.success
     assert result.step is None
     assert "Paint is not the active application" in result.reason
+
+
+
+def test_planner_shows_ollama_http_error_body(monkeypatch):
+    error_body = json.dumps({"error": "image payload is not supported by this model"}).encode("utf-8")
+    http_error = urllib.error.HTTPError(
+        "http://127.0.0.1:11434/api/chat",
+        400,
+        "Bad Request",
+        hdrs=None,
+        fp=BytesIO(error_body),
+    )
+
+    def raise_http_error(*args, **kwargs):
+        raise http_error
+
+    monkeypatch.setattr("urllib.request.urlopen", raise_http_error)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    with pytest.raises(CUAError, match="HTTP 400 Bad Request") as caught:
+        planner.plan_next("Describe the desktop.", observation, [])
+
+    assert "image payload is not supported by this model" in str(caught.value)

@@ -1,0 +1,46 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "qwencoder-cua"
+version = "0.1.0"
+description = "Local-first cross-platform computer-use driver"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+dependencies = [
+  "pydantic>=2.7,<3",
+  "anyio>=4.4,<5",
+  "Pillow>=10.3",
+  "mss>=9.0",
+  "psutil>=6.0",
+  "platformdirs>=4.2",
+  "structlog>=24.2",
+  "typer>=0.12",
+  "rich>=13.7",
+]
+
+[project.optional-dependencies]
+windows = ["pywin32>=306; platform_system == 'Windows'", "pywinauto>=0.6.8; platform_system == 'Windows'"]
+linux = ["python-xlib>=0.33; platform_system == 'Linux'", "dbus-next>=0.2.3; platform_system == 'Linux'"]
+dev = ["pytest>=8.2", "pytest-cov>=5.0", "ruff>=0.5", "mypy>=1.10"]
+
+[project.scripts]
+qwencoder-cua = "qwencoder_cua.cli:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/qwencoder_cua"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.11"
+warn_unused_configs = true
+check_untyped_defs = true

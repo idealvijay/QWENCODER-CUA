@@ -1,0 +1,242 @@
+from __future__ import annotations
+
+import os
+import tempfile
+import time
+from dataclasses import replace
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Callable, Protocol
+from uuid import uuid4
+
+from qwencoder_cua.agent.plan import (
+    TaskDecision, TaskPlan, TaskRunResult, TaskStep, TaskStepResult,
+)
+from qwencoder_cua.agent.policy import TaskPolicy
+from qwencoder_cua.core.exceptions import CUAError
+from qwencoder_cua.execution.verifier import verify_observation
+from qwencoder_cua.models.observation import Observation
+
+
+class TaskPlanner(Protocol):
+    """Planner adapter. It must return one next action or an explicit done decision."""
+
+    def plan_next(self, goal: str, observation: Observation,
+                  history: list[TaskStepResult]) -> TaskDecision: ...
+
+
+ApprovalCallback = Callable[[TaskStep, int], bool]
+
+
+class TaskRunner:
+    """Bounded observe → plan → act → verify loop.
+
+    Planners emit structured data only. Execution is restricted to the action
+    allow-list; shell commands, Python code, and arbitrary tool calls are not
+    part of the plan schema.
+    """
+
+    def __init__(self, computer, policy: TaskPolicy | None = None):
+        self.computer = computer
+        self.policy = policy or TaskPolicy()
+
+    def run(self, goal: str, planner: TaskPlanner,
+            approve: ApprovalCallback | None = None) -> TaskRunResult:
+        """Ask the planner for one action at a time, re-observing after every verified step."""
+        if not goal.strip():
+            raise ValueError("goal must not be empty")
+        self._require_connected()
+        started = datetime.now(timezone.utc)
+        run_id = uuid4().hex
+        clock_start = time.monotonic()
+        history: list[TaskStepResult] = []
+
+        for index in range(1, self.policy.max_steps + 2):
+            remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
+            if remaining <= 0:
+                return self._run_result(run_id, goal, False, "timed_out", history,
+                                        "Task exceeded runtime limit.", started)
+            fd, screenshot_path = tempfile.mkstemp(prefix="qwencoder-plan-", suffix=".png")
+            os.close(fd)
+            try:
+                observation = self.computer.observe(screenshot_path=screenshot_path)
+                decision = planner.plan_next(goal, observation, list(history))
+                if not isinstance(decision, TaskDecision):
+                    decision = TaskDecision.model_validate(decision)
+            finally:
+                Path(screenshot_path).unlink(missing_ok=True)
+
+            if decision.done:
+                return self._run_result(
+                    run_id, goal, decision.success,
+                    "completed" if decision.success else "failed", history,
+                    decision.reason or ("Planner marked the task complete." if decision.success
+                                        else "Planner could not complete the task."), started,
+                )
+            if index > self.policy.max_steps:
+                return self._run_result(
+                    run_id, goal, False, "timed_out", history,
+                    f"Planner requested more actions than the {self.policy.max_steps}-step limit.", started,
+                )
+            if decision.step is None:
+                return self._run_result(run_id, goal, False, "failed", history,
+                                        "Planner returned no action.", started)
+
+            # One-step execution inherits the remaining global time budget.
+            remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
+            if remaining <= 0:
+                return self._run_result(run_id, goal, False, "timed_out", history,
+                                        "Task exceeded runtime limit.", started)
+            step_policy = replace(self.policy, max_steps=1, max_runtime_seconds=max(0.1, remaining))
+            step_runner = TaskRunner(self.computer, step_policy)
+            step_plan = TaskPlan(goal=goal, steps=[decision.step])
+            wrapped_approval = None
+            if approve is not None:
+                wrapped_approval = lambda step, _local_index: approve(step, index)
+            step_result = step_runner.execute(step_plan, approve=wrapped_approval)
+            history.extend(step_result.steps)
+            if not step_result.success:
+                return self._run_result(
+                    run_id, goal, False, step_result.status, history,
+                    step_result.message, started,
+                )
+
+        return self._run_result(
+            run_id, goal, False, "timed_out", history,
+            f"Planner did not finish within the {self.policy.max_steps}-step limit.", started,
+        )
+
+    def execute(self, plan: TaskPlan, approve: ApprovalCallback | None = None) -> TaskRunResult:
+        """Execute a fixed structured plan. Each step must verify before the next begins."""
+        self._require_connected()
+        if not isinstance(plan, TaskPlan):
+            plan = TaskPlan.model_validate(plan)
+        started = datetime.now(timezone.utc)
+        clock_start = time.monotonic()
+        results: list[TaskStepResult] = []
+
+        if len(plan.steps) > self.policy.max_steps:
+            return self._result(plan, False, "failed", results,
+                                "Plan exceeds the configured step limit.", started)
+
+        for index, step in enumerate(plan.steps, start=1):
+            elapsed = time.monotonic() - clock_start
+            if elapsed >= self.policy.max_runtime_seconds:
+                return self._result(plan, False, "timed_out", results,
+                                    "Task exceeded runtime limit.", started)
+            if step.action not in self.policy.allowed_actions:
+                return self._result(plan, False, "failed", results,
+                                    f"Action {step.action!r} is not allowed.", started)
+            if step.action == "type_text" and len(step.text or "") > self.policy.max_text_chars:
+                return self._result(plan, False, "failed", results,
+                                    "Text exceeds configured length limit.", started)
+
+            if step.approval_required and not bool(approve and approve(step, index)):
+                return self._result(
+                    plan, False, "approval_required", results,
+                    f"Step {index} requires user approval and was not approved.", started,
+                )
+
+            before_fd, before_path_str = tempfile.mkstemp(prefix="qwencoder-before-", suffix=".png")
+            os.close(before_fd)
+            after_fd, after_path_str = tempfile.mkstemp(prefix="qwencoder-after-", suffix=".png")
+            os.close(after_fd)
+            before_path, after_path = Path(before_path_str), Path(after_path_str)
+            try:
+                before = self.computer.observe(screenshot_path=before_path)
+                try:
+                    self._dispatch(step)
+                except Exception as exc:
+                    results.append(TaskStepResult(
+                        step_id=step.step_id, action=step.action, dispatched=False,
+                        verified=False, message=f"Action dispatch failed: {exc}",
+                        before_observation_id=before.observation_id,
+                    ))
+                    if plan.stop_on_failure:
+                        return self._result(plan, False, "failed", results,
+                                            "Action dispatch failed.", started)
+                    continue
+
+                deadline = min(
+                    time.monotonic() + step.timeout_seconds,
+                    clock_start + self.policy.max_runtime_seconds,
+                )
+                after = None
+                verified, message = False, "Verification did not run."
+                while True:
+                    after = self.computer.observe(screenshot_path=after_path)
+                    try:
+                        verified, message = verify_observation(
+                            after, step.expected, previous_screenshot_path=str(before_path)
+                        )
+                    except Exception as exc:
+                        verified, message = False, f"Invalid postcondition: {exc}"
+                    if verified or time.monotonic() >= deadline:
+                        break
+                    time.sleep(self.policy.verification_poll_interval)
+
+                results.append(TaskStepResult(
+                    step_id=step.step_id, action=step.action, dispatched=True,
+                    verified=verified, message=message,
+                    before_observation_id=before.observation_id,
+                    after_observation_id=after.observation_id if after else None,
+                ))
+                if not verified and plan.stop_on_failure:
+                    return self._result(
+                        plan, False, "failed", results,
+                        f"Step {index} could not verify its postcondition.", started,
+                    )
+            finally:
+                before_path.unlink(missing_ok=True)
+                after_path.unlink(missing_ok=True)
+
+        all_verified = len(results) == len(plan.steps) and all(
+            item.dispatched and item.verified for item in results
+        )
+        return self._result(
+            plan, all_verified, "completed" if all_verified else "failed", results,
+            "All steps completed and verified." if all_verified
+            else "One or more steps were not verified.", started,
+        )
+
+    def _dispatch(self, step: TaskStep):
+        if step.action == "click":
+            self.computer.click(step.x, step.y)
+        elif step.action == "type_text":
+            self.computer.type_text(step.text)
+        elif step.action == "press_key":
+            self.computer.press_key(step.key)
+        elif step.action == "scroll":
+            self.computer.scroll(step.dx, step.dy)
+        elif step.action in {"click_element", "focus_element", "set_element_value"}:
+            if not self.computer._provider:
+                raise CUAError("Semantic action requested but accessibility is unavailable.")
+            element = self.computer.find_element(step.selector)
+            if step.action == "click_element":
+                self.computer.click_element(element.id)
+            elif step.action == "focus_element":
+                self.computer.focus_element(element.id)
+            else:
+                self.computer.set_element_value(element.id, step.value)
+        else:
+            raise CUAError(f"Unsupported action: {step.action}")
+
+    def _require_connected(self):
+        if not getattr(self.computer, "_connected", False):
+            raise RuntimeError("Computer must be connected before running a task.")
+
+    @staticmethod
+    def _result(plan, success, status, steps, message, started):
+        return TaskRunResult(
+            plan_id=plan.plan_id, goal=plan.goal, success=success, status=status,
+            steps=steps, message=message, started_at=started,
+            completed_at=datetime.now(timezone.utc),
+        )
+
+    @staticmethod
+    def _run_result(run_id, goal, success, status, steps, message, started):
+        return TaskRunResult(
+            plan_id=run_id, goal=goal, success=success, status=status,
+            steps=steps, message=message, started_at=started,
+            completed_at=datetime.now(timezone.utc),
+        )

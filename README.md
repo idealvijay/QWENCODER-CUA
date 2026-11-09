@@ -142,14 +142,28 @@ If Paint opens the image but double-clicking PNG or JPG files in File Explorer d
 
 ### 5. Inspect the desktop
 
-Open Paint, Photoshop, or another target application yourself and leave it in the foreground. Then run:
+Open Paint, Photoshop, or another target application yourself. The application must be in the foreground when QWENCODER captures the observation. You can inspect the current windows and active accessibility tree with:
 
 ```cmd
 qwencoder-cua windows
 qwencoder-cua inspect --max-depth 10
 ```
 
-`windows` lists visible windows. `inspect` captures the current desktop and prints accessibility information exposed by the foreground application.
+`windows` lists visible windows. `inspect` captures the current desktop and prints accessibility information exposed by the foreground application. The current v0.4 agent does not have a window-switch action, so it cannot activate Paint from inside the task plan.
+
+**Tip — start an observation without leaving the target app covered by CMD:** first open Paint. Then, from CMD, run this background command:
+
+```cmd
+start "QWENCODER Paint observer" /min cmd /c "timeout /t 7 /nobreak >nul & qwencoder-cua run-goal ""Describe the Paint interface, canvas, ribbon tools, drawing controls and visible options. Do not make any changes."" > paint-observation.txt 2>&1"
+```
+
+Immediately press **Alt+Tab** to bring Paint to the foreground. Keep Paint visible while QWENCODER runs. When it finishes, return to CMD and read the result:
+
+```cmd
+type paint-observation.txt
+```
+
+If the result says the active application is still `cmd.exe`, Paint was not foreground when the observation was taken; repeat the background command and switch to Paint during the seven-second countdown.
 
 ### 6. Run a safe local-agent test
 

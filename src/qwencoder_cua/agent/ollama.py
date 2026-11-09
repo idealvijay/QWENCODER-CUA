@@ -30,6 +30,12 @@ in "reason", and set step=null. Do not invent a click, keypress, or other no-op 
 complete a read-only request. If the current observation is insufficient, return done=true,
 success=false and explain what is missing.
 
+If the user asks about a specific application (for example Paint or Photoshop) and that
+application is not the active window, do not invent a click or attempt to switch windows.
+Return done=true, success=false, step=null, and explain that the user must bring the target
+application to the foreground and run the request again. The allowed action list does not
+include window switching.
+
 Otherwise, return exactly one next action and include its expected postcondition.
 Allowed actions:
 - click: x, y
@@ -122,6 +128,14 @@ class OllamaTaskPlanner:
             if not isinstance(content, str):
                 raise CUAError("Ollama returned no JSON message content.")
             decision_data = json.loads(content)
+            # Some local models attach an action even after declaring the task complete.
+            # A completed/blocked decision must never dispatch that stray action.
+            if (
+                isinstance(decision_data, dict)
+                and decision_data.get("done") is True
+                and decision_data.get("step") is not None
+            ):
+                decision_data["step"] = None
             return TaskDecision.model_validate(decision_data)
         except ValidationError as exc:
             response_content = locals().get("content")

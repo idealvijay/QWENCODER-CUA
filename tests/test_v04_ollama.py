@@ -100,3 +100,39 @@ def test_planner_reports_invalid_decision_as_cua_error(monkeypatch):
 
     with pytest.raises(CUAError, match="does not match the required schema"):
         planner.plan_next("Describe the visible application without changes.", observation, [])
+
+
+
+def test_prompt_explains_target_application_must_be_foreground():
+    assert "not the active window" in SYSTEM_PROMPT
+    assert "do not invent a click" in SYSTEM_PROMPT
+    assert "bring the target application to the foreground" in SYSTEM_PROMPT
+
+
+def test_completed_decision_discards_stray_model_action(monkeypatch):
+    # A few local models return done=true but still attach a malformed or
+    # contradictory step. A terminal decision must never dispatch that step.
+    decision = {
+        "done": True,
+        "success": False,
+        "reason": "Paint is not the active application. Bring Paint to the foreground and retry.",
+        "step": {
+            "click": {"element_absent": {"role": "window", "name": "Paint"}},
+            "expected_postcondition": {"active_window_title_contains": "Paint"},
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Describe the Paint interface without changes.", observation, [])
+
+    assert result.done
+    assert not result.success
+    assert result.step is None
+    assert "Paint is not the active application" in result.reason

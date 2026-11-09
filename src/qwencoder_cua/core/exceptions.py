@@ -1,18 +1,5 @@
-class CUAError(RuntimeError):
-    """Base exception for driver errors."""
-
-
-class DriverUnavailableError(CUAError):
-    pass
-
-
-class UnsupportedOperationError(CUAError):
-    pass
-
-
-class PermissionDeniedError(CUAError):
-    pass
-
-
-class StaleTargetError(CUAError):
-    pass
+class CUAError(RuntimeError): pass
+class DriverUnavailableError(CUAError): pass
+class UnsupportedOperationError(CUAError): pass
+class StaleElementError(CUAError): pass
+class AmbiguousElementError(CUAError): pass

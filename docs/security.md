@@ -1,10 +1,10 @@
-# Security
+# Security model
 
-- Operate only on a desktop session the user owns or is authorized to control.
-- Do not run as a privileged service or Linux root user.
-- Keep input restricted to the current interactive user session.
-- No arbitrary shell command API is exposed.
-- Clipboard read is intentionally not implemented by default.
-- Wayland global capture/input is not bypassed; use user-authorized portals.
-- Never log typed text, passwords, clipboard contents or screenshot pixels by default.
-- Add explicit confirmation gates before destructive file, account or system actions.
+- Local process only; no network listener or cloud dependency.
+- No privilege escalation or OS security-boundary bypass.
+- Element tokens are random, short-lived and invalidated on every observation.
+- Providers reject disabled controls and unsupported actions.
+- UIA/AT-SPI object wrappers are process-local and must be refreshed after UI changes.
+- Treat screenshots, labels, values and window titles as potentially sensitive.
+- Do not feed untrusted UI text to shell execution or privileged commands.
+- For high-impact actions, require an application-level confirmation step in the agent.

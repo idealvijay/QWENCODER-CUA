@@ -1,37 +1,40 @@
+from __future__ import annotations
+import json
 from pathlib import Path
 import typer
 from rich import print
+from qwencoder_cua import Computer, __version__
 
-from qwencoder_cua.core.computer import Computer
-from qwencoder_cua.core.registry import detect_linux_session
+app = typer.Typer(help="QWENCODER CUA local desktop automation")
 
-app = typer.Typer(help="QWENCODER local computer-use driver")
-
+@app.command()
+def version():
+    print(f"QWENCODER CUA {__version__}")
 
 @app.command()
 def doctor():
-    import platform
-    print(f"[bold]Platform:[/bold] {platform.system()}")
-    if platform.system() == "Linux":
-        print(f"[bold]Session:[/bold] {detect_linux_session()}")
-    try:
-        with Computer() as computer:
-            print(f"[green]Driver connected:[/green] {computer.driver.name}")
-            print(f"Capabilities: {computer.driver.capabilities.model_dump()}")
-    except Exception as exc:
-        print(f"[red]Driver unavailable:[/red] {exc}")
-        raise typer.Exit(1)
-
+    """Run platform dependency diagnostics."""
+    import runpy
+    runpy.run_path(str(Path(__file__).resolve().parents[3] / "scripts" / "doctor.py"))
 
 @app.command()
-def screenshot(output: Path = typer.Option(Path("qwencoder-desktop.png"), "--output", "-o")):
+def screenshot(output: str = typer.Option("desktop.png", "--output", "-o")):
     with Computer() as computer:
-        image = computer.screenshot(output)
-    print(f"[green]Saved:[/green] {output} ({image.width}x{image.height})")
-
+        computer.screenshot(output)
+    print(f"[green]Saved screenshot:[/green] {output}")
 
 @app.command()
 def windows():
+    with Computer(accessibility=False) as computer:
+        for window in computer.windows():
+            print(f"{window.id}\t{window.title}")
+
+@app.command("inspect")
+def inspect_tree(max_depth: int = typer.Option(10, min=1, max=30)):
+    """Capture screenshot and dump normalized accessibility elements."""
     with Computer() as computer:
-        for item in computer.windows():
-            print(f"{item.id:>12}  {item.title}")
+        observation = computer.observe(max_depth=max_depth)
+        print(json.dumps(observation.model_dump(mode="json"), indent=2, default=str))
+
+if __name__ == "__main__":
+    app()

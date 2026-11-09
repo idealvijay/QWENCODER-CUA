@@ -1,6 +1,4 @@
-from .core.computer import Computer
-from .models.observation import Observation
-from .models.result import ActionEffect, ActionResult
-
-__all__ = ["Computer", "Observation", "ActionEffect", "ActionResult"]
-__version__ = "0.1.0"
+"""QWENCODER CUA public API."""
+from qwencoder_cua.core.computer import Computer
+__version__ = "0.2.0"
+__all__ = ["Computer", "__version__"]

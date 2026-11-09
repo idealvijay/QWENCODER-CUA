@@ -1,27 +1,18 @@
-# Architecture
+# Architecture — v0.2
 
-The runtime is split into platform adapters, typed models, a synchronous public facade,
-and optional transports. AI planning is deliberately outside this repository's core.
+## Hybrid perception
 
-## Backend selection
+1. `Computer.observe()` captures a screenshot and window metadata.
+2. The platform accessibility provider enumerates semantic elements when available.
+3. The facade assigns random observation-scoped tokens with a short TTL.
+4. The agent chooses semantic actions when possible; otherwise it can use coordinates.
+5. A new observation invalidates all prior tokens.
 
-- Windows: Win32 window APIs, MSS capture and PyAutoGUI input.
-- Linux X11: python-xlib/XTest and MSS.
-- Linux Wayland: detected explicitly; portal adapter is a future implementation.
-- Unknown/headless sessions: fail with a diagnostic rather than guessing.
+## Provider boundaries
 
-## Coordinate contract
+`AccessibilityProvider` is independent of visual drivers. Windows uses UI Automation through pywinauto. Linux uses AT-SPI through pyatspi. Both normalize into `UIElement`. This avoids pretending that Windows UIA and Linux AT-SPI expose identical metadata.
 
-The initial public API accepts physical desktop pixel coordinates in the coordinate
-space returned by screenshot capture. Multi-monitor negative origins and per-monitor
-DPI scaling need dedicated tests before being considered production-ready.
+## Linux session strategy
 
-## Observation identity
-
-Observation IDs are generated for each capture. Future element handles must include
-the observation ID and become invalid after a new observation.
-
-## Verification
-
-The initial scaffold reports raw driver execution. It does not yet claim that an action
-achieved the intended UI effect. A verifier is a required next milestone.
+- X11: existing Xlib/XTest backend handles capture and global input.
+- Wayland: no global input/capture adapter in this release. AT-SPI may still expose application semantics, but semantic action availability varies. Portal capture and remote-desktop input need a dedicated consent-aware implementation.

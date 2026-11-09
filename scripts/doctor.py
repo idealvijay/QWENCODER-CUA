@@ -1,19 +1,22 @@
-from qwencoder_cua.core.computer import Computer
-from qwencoder_cua.core.registry import detect_linux_session
-import platform
+from __future__ import annotations
+import importlib.util, os, platform, shutil, sys
 
-print("QWENCODER CUA environment diagnostic")
-print("OS:", platform.platform())
-if platform.system() == "Linux":
-    print("Desktop session:", detect_linux_session())
+def check(label, ok, detail=""):
+    print(f"[{'OK' if ok else 'MISSING'}] {label}" + (f": {detail}" if detail else ""))
 
-try:
-    with Computer() as computer:
-        print("Driver:", computer.driver.name)
-        print("Capabilities:", computer.driver.capabilities.model_dump())
-        observation = computer.observe()
-        print("Screenshot:", observation.screenshot)
-        print("Windows found:", len(observation.windows))
-except Exception as exc:
-    print("Driver check failed:", type(exc).__name__, str(exc))
-    raise SystemExit(1)
+print(f"QWENCODER CUA doctor | Python {sys.version.split()[0]} | {platform.platform()}")
+check("Python >= 3.11", sys.version_info >= (3, 11))
+if platform.system() == "Windows":
+    for mod in ("win32gui", "pywinauto", "pyautogui", "mss"):
+        check(mod, importlib.util.find_spec(mod) is not None)
+    check("interactive Windows session", os.environ.get("SESSIONNAME") is not None, os.environ.get("SESSIONNAME", "unknown"))
+elif platform.system() == "Linux":
+    session = os.environ.get("XDG_SESSION_TYPE", "unknown")
+    check("desktop session", session in ("x11", "wayland"), session)
+    check("DISPLAY", bool(os.environ.get("DISPLAY")), os.environ.get("DISPLAY", "unset"))
+    check("WAYLAND_DISPLAY", bool(os.environ.get("WAYLAND_DISPLAY")), os.environ.get("WAYLAND_DISPLAY", "unset"))
+    check("python-xlib", importlib.util.find_spec("Xlib") is not None)
+    check("pyatspi", importlib.util.find_spec("pyatspi") is not None, "AT-SPI needs distro bindings + at-spi2-core")
+    check("xdotool", shutil.which("xdotool") is not None, "optional helper for diagnostics")
+else:
+    check("supported OS", False, platform.system())

@@ -52,6 +52,15 @@ class LinuxATSPIProvider(AccessibilityProvider):
                     bounds = Rect(x=int(ext.x), y=int(ext.y), width=int(ext.width), height=int(ext.height))
                 except Exception:
                     pass
+                value = None
+                try:
+                    value = str(obj.queryValue().currentValue)
+                except Exception:
+                    try:
+                        text_iface = obj.queryText()
+                        value = text_iface.getText(0, text_iface.characterCount)
+                    except Exception:
+                        pass
                 raw_id = f"atspi:{counter}"
                 counter += 1
                 self._objects[raw_id] = obj
@@ -67,10 +76,16 @@ class LinuxATSPIProvider(AccessibilityProvider):
                         actions.append("set_value")
                 except Exception:
                     pass
+                attributes = {}
+                try:
+                    attributes = obj.getAttributes()
+                except Exception:
+                    pass
                 result.append(UIElement(
-                    id=raw_id, role=str(role).lower(), name=name, bounds=bounds,
+                    id=raw_id, role=str(role).lower(), name=name, value=value, bounds=bounds,
                     enabled=enabled, visible=visible, focused=focused, actions=actions,
-                    parent_id=parent_id, parent_name=parent_name, depth=depth,
+                    parent_id=parent_id, parent_name=parent_name,
+                    automation_id=attributes.get("id") or None, depth=depth,
                 ))
                 for index in range(obj.getChildCount()):
                     try:

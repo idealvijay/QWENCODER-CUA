@@ -107,7 +107,8 @@ def test_planner_reports_invalid_decision_as_cua_error(monkeypatch):
 def test_prompt_explains_target_application_must_be_foreground():
     assert "not the active window" in SYSTEM_PROMPT
     assert "do not invent a click" in SYSTEM_PROMPT
-    assert "bring the target application to the foreground" in SYSTEM_PROMPT
+    normalized_prompt = " ".join(SYSTEM_PROMPT.split())
+    assert "bring the target application to the foreground" in normalized_prompt
 
 
 def test_completed_decision_discards_stray_model_action(monkeypatch):

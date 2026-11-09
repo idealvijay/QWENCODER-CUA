@@ -371,15 +371,27 @@ class WaylandPortalDriver(BaseDriver):
             logical_y *= self._logical_size[1] / max(1, self._pixel_size[1])
         self._notify("call_notify_pointer_motion_absolute", self._node_id, logical_x, logical_y)
 
-    def click(self, x: int, y: int, button: str = "left"):
+    def mouse_down(self, x: int, y: int, button: str = "left"):
         if button not in EVDEV_BUTTONS:
             raise ValueError(f"Unsupported mouse button: {button}")
         if not self._pointer_granted:
             raise UnsupportedOperationError("The user did not grant pointer control in the portal dialog.")
         self.move(x, y)
-        code = EVDEV_BUTTONS[button]
-        self._notify("call_notify_pointer_button", code, 1)
-        self._notify("call_notify_pointer_button", code, 0)
+        self._notify("call_notify_pointer_button", EVDEV_BUTTONS[button], 1)
+
+    def mouse_up(self, button: str = "left"):
+        if button not in EVDEV_BUTTONS:
+            raise ValueError(f"Unsupported mouse button: {button}")
+        if not self._pointer_granted:
+            raise UnsupportedOperationError("The user did not grant pointer control in the portal dialog.")
+        self._notify("call_notify_pointer_button", EVDEV_BUTTONS[button], 0)
+
+    def click(self, x: int, y: int, button: str = "left"):
+        self.mouse_down(x, y, button)
+        try:
+            pass
+        finally:
+            self.mouse_up(button)
 
     def scroll(self, dx=0, dy=0):
         if not self._pointer_granted:

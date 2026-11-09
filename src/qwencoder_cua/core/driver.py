@@ -2,7 +2,9 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from pathlib import Path
-from typing import Any
+from math import ceil, hypot
+from time import sleep
+from typing import Any, Sequence
 
 from qwencoder_cua.models.capabilities import DriverCapabilities
 from qwencoder_cua.models.window import WindowInfo
@@ -50,6 +52,69 @@ class BaseDriver(ABC):
     @abstractmethod
     def move(self, x: int, y: int) -> None:
         raise NotImplementedError
+
+    def mouse_down(self, x: int, y: int, button: str = "left") -> None:
+        """Move to a point and press a pointer button; platform drivers implement this."""
+        raise NotImplementedError("Held mouse-button input is not supported by this driver.")
+
+    def mouse_up(self, button: str = "left") -> None:
+        """Release a pointer button previously pressed with mouse_down()."""
+        raise NotImplementedError("Held mouse-button input is not supported by this driver.")
+
+    def drag(self, start_x: int, start_y: int, end_x: int, end_y: int,
+             button: str = "left", duration_seconds: float = 0.5) -> None:
+        """Draw one straight, button-held pointer movement."""
+        self.draw_path(
+            [(start_x, start_y), (end_x, end_y)],
+            button=button,
+            duration_seconds=duration_seconds,
+        )
+
+    def draw_path(self, points: Sequence[tuple[int, int]], button: str = "left",
+                  duration_seconds: float = 1.0) -> None:
+        """Draw a smooth polyline and always release the pointer button.
+
+        Coordinates are desktop screenshot pixels with a top-left origin. The path is
+        sampled at no more than six-pixel intervals and is capped at 4096 pointer events.
+        """
+        if button not in {"left", "middle", "right"}:
+            raise ValueError(f"Unsupported mouse button: {button}")
+        if not 0.05 <= duration_seconds <= 10.0:
+            raise ValueError("duration_seconds must be between 0.05 and 10 seconds.")
+        normalized = [(int(x), int(y)) for x, y in points]
+        if not 2 <= len(normalized) <= 64:
+            raise ValueError("A drawing path must contain between 2 and 64 points.")
+        if any(x < 0 or y < 0 for x, y in normalized):
+            raise ValueError("Drawing path coordinates must not be negative.")
+
+        segments = []
+        total_samples = 0
+        for start, end in zip(normalized, normalized[1:]):
+            distance = hypot(end[0] - start[0], end[1] - start[1])
+            count = max(1, ceil(distance / 6.0))
+            total_samples += count
+            segments.append((start, end, count))
+        if total_samples > 4096:
+            raise ValueError("Drawing path is too long (more than 4096 pointer samples).")
+
+        delay = duration_seconds / max(1, total_samples)
+        pressed = False
+        try:
+            # Best-effort release is attempted even if the backend partially presses
+            # the button and then raises.
+            pressed = True
+            self.mouse_down(*normalized[0], button=button)
+            for start, end, count in segments:
+                for index in range(1, count + 1):
+                    ratio = index / count
+                    x = round(start[0] + (end[0] - start[0]) * ratio)
+                    y = round(start[1] + (end[1] - start[1]) * ratio)
+                    self.move(x, y)
+                    if delay:
+                        sleep(delay)
+        finally:
+            if pressed:
+                self.mouse_up(button=button)
 
     @abstractmethod
     def scroll(self, dx: int = 0, dy: int = 0) -> None:

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+- Add held-button mouse input and atomic straight-line drag / multi-waypoint drawing paths.
+- Implement Windows, Linux X11 and consent-gated Wayland pointer press/release adapters.
+- Guarantee best-effort pointer release after drawing-path failures.
+- Add bounded planner actions for pointer movement, drag and draw path.
+- Validate drawing waypoint count, duration and coordinates against captured desktop dimensions.
+- Add circle and rectangle polyline helpers for application-independent drawing.
+
 ## 0.4.0
 - Implement a consent-aware Wayland RemoteDesktop + ScreenCast session backend.
 - Capture screenshots through the portal-restricted PipeWire remote FD and GStreamer PipeWire source.

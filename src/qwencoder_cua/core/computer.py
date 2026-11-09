@@ -123,6 +123,25 @@ class Computer:
         self._require_connected()
         return self.driver.move(x, y)
 
+    def mouse_down(self, x, y, button="left"):
+        self._require_connected()
+        return self.driver.mouse_down(x, y, button)
+
+    def mouse_up(self, button="left"):
+        self._require_connected()
+        return self.driver.mouse_up(button)
+
+    def drag(self, start_x, start_y, end_x, end_y, button="left", duration_seconds=0.5):
+        self._require_connected()
+        return self.driver.drag(
+            start_x, start_y, end_x, end_y,
+            button=button, duration_seconds=duration_seconds,
+        )
+
+    def draw_path(self, points, button="left", duration_seconds=1.0):
+        self._require_connected()
+        return self.driver.draw_path(points, button=button, duration_seconds=duration_seconds)
+
     def scroll(self, dx=0, dy=0):
         self._require_connected()
         return self.driver.scroll(dx, dy)

@@ -134,6 +134,24 @@ class X11Driver(BaseDriver):
         self._xtest.fake_input(self._display, X.MotionNotify, x=x, y=y)
         self._display.sync()
 
+    @staticmethod
+    def _button_code(button: str) -> int:
+        buttons = {"left": 1, "middle": 2, "right": 3}
+        if button not in buttons:
+            raise ValueError(f"Unsupported mouse button: {button}")
+        return buttons[button]
+
+    def mouse_down(self, x: int, y: int, button="left"):
+        self._check()
+        from Xlib import X
+        self.move(x, y)
+        self._fake(X.ButtonPress, self._button_code(button))
+
+    def mouse_up(self, button="left"):
+        self._check()
+        from Xlib import X
+        self._fake(X.ButtonRelease, self._button_code(button))
+
     def scroll(self, dx=0, dy=0):
         self._check()
         from Xlib import X

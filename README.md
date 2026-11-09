@@ -173,6 +173,15 @@ qwencoder-cua run-goal "Describe the currently open application and identify its
 
 If the command cannot connect to Ollama, repeat the API check in Step 2. If the model is missing, repeat `ollama pull minicpm-v4.5:q4_0`.
 
+If QWENCODER reports `HTTP 400 Bad Request`, the Ollama server was reached but rejected the request. Check that the configured model exists and supports images:
+
+```cmd
+ollama list
+ollama show minicpm-v4.5:q4_0
+```
+
+The application will show Ollama's detailed HTTP error after the HTTP-error diagnostic fix is installed. Use that message to distinguish an unsupported request, image-processing issue, or model/runtime problem; do not treat every HTTP 400 as a connection failure.
+
 **v0.4 limitations:** QWENCODER CUA can observe the screen and use supported mouse, keyboard, text, and accessibility actions. It does not yet provide dedicated drag-and-drop, continuous brush strokes, or artwork-generation actions. It also does not launch Paint or Photoshop automatically; open the target application before running a task.
 
 ---

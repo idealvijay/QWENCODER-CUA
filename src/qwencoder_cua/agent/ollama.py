@@ -144,6 +144,24 @@ class OllamaTaskPlanner:
                 "Ollama returned a task decision that does not match the required schema. "
                 f"Validation details: {exc}. Response excerpt: {response_excerpt}"
             ) from exc
+        except urllib.error.HTTPError as exc:
+            # HTTPError is also a URLError, so catch it first and preserve Ollama's
+            # structured error body instead of misreporting a rejected request as a
+            # network connection failure.
+            try:
+                error_body = exc.read().decode("utf-8", errors="replace")
+            except Exception:
+                error_body = ""
+            try:
+                parsed_error = json.loads(error_body)
+                error_message = parsed_error.get("error", error_body)
+            except (json.JSONDecodeError, AttributeError):
+                error_message = error_body or str(exc.reason)
+            error_message = str(error_message).strip()[:1200]
+            raise CUAError(
+                f"Ollama rejected the chat request (HTTP {exc.code} {exc.reason}): "
+                f"{error_message}"
+            ) from exc
         except (urllib.error.URLError, TimeoutError) as exc:
             raise CUAError(f"Could not reach local Ollama at {self.endpoint}: {exc}") from exc
         except (json.JSONDecodeError, KeyError, TypeError) as exc:

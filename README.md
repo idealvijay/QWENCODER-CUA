@@ -56,6 +56,113 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 Keep this PowerShell window open with `.venv` activated when running the CLI.
 
+## Windows 10/11 — step-by-step first run (Command Prompt)
+
+These steps use **Command Prompt (CMD)**, not PowerShell. Run them in the same CMD window, from the repository folder containing `pyproject.toml`.
+
+### 1. Open the repository and activate the environment
+
+If the repository is already on disk, change to its folder. Replace the example path with your own:
+
+```cmd
+cd /d H:\path\to\QWENCODER-CUA
+dir pyproject.toml
+```
+
+The `dir` command should show `pyproject.toml`. Activate the environment:
+
+```cmd
+call .venv\Scripts\activate.bat
+```
+
+If `.venv` does not exist yet, create it and install the project:
+
+```cmd
+py -3.11 -m venv .venv
+call .venv\Scripts\activate.bat
+python -m pip install --upgrade pip
+python -m pip install -e ".[windows,dev]"
+```
+
+You should now see `(.venv)` at the start of the prompt.
+
+### 2. Check Ollama (do not start a second server)
+
+```cmd
+ollama list
+```
+
+If `minicpm-v4.5:q4_0` is not listed, download it:
+
+```cmd
+ollama pull minicpm-v4.5:q4_0
+```
+
+Set the local endpoint and model for this CMD window:
+
+```cmd
+set "OLLAMA_URL=http://127.0.0.1:11434"
+set "QWENCODER_CUA_MODEL=minicpm-v4.5:q4_0"
+curl http://127.0.0.1:11434/api/tags
+```
+
+A JSON response listing models means Ollama is reachable. The Ollama Windows app normally runs its server in the background. If `ollama serve` says the address or port is already in use, another server is probably already listening; do not keep starting more copies. Check the API with the `curl` command above. If it does not respond, launch Ollama from the Windows Start menu and retry.
+
+> **CMD and PowerShell use different syntax:** in CMD use `set "NAME=value"`; in PowerShell use `$env:NAME = "value"`. Do not mix the two.
+
+### 3. Run the diagnostic
+
+```cmd
+qwencoder-cua doctor
+```
+
+The `doctor` command's repository-path fix is included in this pull request. If you are still using an older checkout and it reports that `scripts\doctor.py` cannot be found, run this temporary workaround from the repository root:
+
+```cmd
+python scripts\doctor.py
+```
+
+A healthy Windows setup should report `OK` for Python 3.11+, `win32gui`, `pywinauto`, `pyautogui`, `mss`, and the interactive Windows session.
+
+### 4. Capture and validate a screenshot
+
+```cmd
+qwencoder-cua screenshot --output desktop.png
+dir desktop.png
+python -c "from PIL import Image; im=Image.open('desktop.png'); print('Format:', im.format, 'Size:', im.size); im.verify(); print('Image file is valid')"
+```
+
+To open it directly in Paint, bypassing the default Windows image viewer:
+
+```cmd
+mspaint "%CD%\desktop.png"
+```
+
+If Paint opens the image but double-clicking PNG or JPG files in File Explorer does not, the image itself may be fine while the default viewer or file association is broken. Open **Settings → Apps → Default apps**, search for `.png`, `.jpg`, and `.jpeg`, and assign them to Photos or Paint. You can also open **Settings → Apps → Installed apps → Microsoft Photos → Advanced options → Repair**. Try **Reset** only if Repair does not help.
+
+### 5. Inspect the desktop
+
+Open Paint, Photoshop, or another target application yourself and leave it in the foreground. Then run:
+
+```cmd
+qwencoder-cua windows
+qwencoder-cua inspect --max-depth 10
+```
+
+`windows` lists visible windows. `inspect` captures the current desktop and prints accessibility information exposed by the foreground application.
+
+### 6. Run a safe local-agent test
+
+```cmd
+qwencoder-cua run-goal "Describe the currently open application and identify its visible controls. Do not make any changes."
+```
+
+If the command cannot connect to Ollama, repeat the API check in Step 2. If the model is missing, repeat `ollama pull minicpm-v4.5:q4_0`.
+
+**v0.4 limitations:** QWENCODER CUA can observe the screen and use supported mouse, keyboard, text, and accessibility actions. It does not yet provide dedicated drag-and-drop, continuous brush strokes, or artwork-generation actions. It also does not launch Paint or Photoshop automatically; open the target application before running a task.
+
+---
+
 ### Rocky Linux X11
 
 ```bash

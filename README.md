@@ -264,6 +264,8 @@ qwencoder-cua doctor
 qwencoder-cua run-goal "Open the settings window and locate the display scale option"
 ```
 
+For read-only goals such as "describe the currently open application", the planner should answer from the current screenshot and accessibility context without interacting with the desktop. Its answer is returned in the final result's `message` field.
+
 The planner returns one structured action at a time. The runner takes a fresh observation after the action, checks the requested postcondition, and only then asks the planner for the next step. Consequential steps marked `approval_required` prompt in the CLI and default to denied.
 
 ### Planner API

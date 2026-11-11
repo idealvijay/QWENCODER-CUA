@@ -3,6 +3,12 @@
 **Version 0.5.1** — local-first Python desktop automation for Windows and Linux.
 Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
+## Optional MCP client integration
+
+QWENCODER can optionally connect to trusted external MCP servers to discover tools and invoke explicitly allow-listed tools. This integration is separate from the native CUA task runner: it does not change the planner, `TaskStep` schema, driver registry, action allow-list, or verification loop.
+
+Install with `python -m pip install -e ".[mcp]"`. See [docs/mcp-integration.md](docs/mcp-integration.md) for stdio and Streamable HTTP examples, tool discovery, explicit tool permissions, and security boundaries.
+
 ## v0.5 highlights
 
 - **Wayland portal backend:** starts an XDG RemoteDesktop session, requests monitor sharing through ScreenCast, and uses the restricted PipeWire FD returned by the portal.

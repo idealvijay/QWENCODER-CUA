@@ -49,14 +49,22 @@ when the session exits. Only pass commands and server packages that you trust.
 ## Connect to a Streamable HTTP server
 
 ```python
-server = MCPServerConfig(
-    name="paint-remote",
-    url="https://mcp.example.com/mcp",
-    allowed_tools=frozenset({"draw_circle"}),
-)
+import asyncio
 
-async with MCPToolSession(server) as session:
-    print(await session.list_tools())
+from qwencoder_cua.integrations.mcp import MCPServerConfig, MCPToolSession
+
+
+async def main():
+    server = MCPServerConfig(
+        name="paint-remote",
+        url="https://mcp.example.com/mcp",
+        allowed_tools=frozenset({"draw_circle"}),
+    )
+    async with MCPToolSession(server) as session:
+        print(await session.list_tools())
+
+
+asyncio.run(main())
 ```
 
 Plain HTTP is accepted only for loopback endpoints (`localhost`, `127.0.0.1`,

@@ -33,6 +33,12 @@ def test_tool_invocation_requires_explicit_allow_list():
         asyncio.run(session.call_tool("draw_circle", {"radius": 10}))
 
 
+class FakeTextContent:
+    def model_dump(self, mode="json"):
+        assert mode == "json"
+        return {"type": "text", "text": "Circle drawn"}
+
+
 class FakeClient:
     def __init__(self):
         self.calls = []
@@ -40,7 +46,10 @@ class FakeClient:
             SimpleNamespace(
                 tools=[SimpleNamespace(
                     name="draw_circle", title="Draw circle", description="Draw a circle",
-                    input_schema={"type": "object", "properties": {"radius": {"type": "integer"}}},
+                    input_schema={
+                        "type": "object",
+                        "properties": {"radius": {"type": "integer"}},
+                    },
                 )],
                 next_cursor="page-2",
             ),
@@ -64,7 +73,7 @@ class FakeClient:
         self.calls.append(("call", name, arguments))
         return SimpleNamespace(
             is_error=False,
-            content=[SimpleNamespace(type="text", text="Circle drawn")],
+            content=[FakeTextContent()],
             structured_content={"success": True},
         )
 
@@ -88,6 +97,7 @@ def test_session_discovers_paginated_tools_and_calls_allow_listed_tool():
     assert [tool["name"] for tool in tools] == ["draw_circle", "save_image"]
     assert tools[0]["input_schema"]["properties"]["radius"]["type"] == "integer"
     assert result["is_error"] is False
+    assert result["content"] == [{"type": "text", "text": "Circle drawn"}]
     assert result["structured_content"] == {"success": True}
     assert fake.calls == [
         ("list", None),
@@ -102,7 +112,9 @@ def test_session_rejects_non_allow_listed_tool():
     async def exercise():
         fake = FakeClient()
         config = MCPServerConfig(
-            name="paint", url="http://localhost:8000/mcp", allowed_tools=frozenset({"draw_circle"})
+            name="paint",
+            url="http://localhost:8000/mcp",
+            allowed_tools=frozenset({"draw_circle"}),
         )
         async with MCPToolSession(config, client_factory=lambda _config: fake) as session:
             with pytest.raises(PermissionError, match="not allow-listed"):

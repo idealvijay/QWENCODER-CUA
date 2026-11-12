@@ -72,6 +72,19 @@ press/move/release) for a freehand path; use drag for a straight drag or a nativ
 ellipse/rectangle tool gesture. A draw_path or drag action must request a screen_changed
 postcondition, normally with min_fraction 0.001.
 
+A non-terminal response MUST use this exact structure (no wrapper keys):
+{"done": false, "success": true, "reason": "Why this one action is next.", "step": {
+  "action": "click", "x": 600, "y": 300,
+  "expected": {"screen_changed": {"min_fraction": 0.001}}
+}}
+For a semantic action, the step still needs an action and expected, for example:
+{"action": "click_element", "selector": {"role": "button", "name": "Ellipse"},
+ "expected": {"screen_changed": {"min_fraction": 0.001}}}
+The step field is mandatory and its action field is mandatory for every non-terminal response.
+Use the exact field name "expected"; never use "postcondition". Do not put assertion names such as
+"element_absent" directly in the step object. Do not output multiple conditions with duplicate JSON
+keys; combine them only if the schema supports them, otherwise verify one condition per step.
+
 Every step MUST include a non-empty expected postcondition. Supported postconditions:
 - {"element_absent": {"role": "...", "name": "..."}}
 - {"element_present": {"role": "...", "name": "..."}}
@@ -154,54 +167,96 @@ class OllamaTaskPlanner:
         images = self._read_observation_image(observation) if self.include_images else []
         if images:
             message["images"] = images
-        payload = {
-            "model": self.model,
-            "messages": [{"role": "system", "content": SYSTEM_PROMPT}, message],
-            "stream": False,
-            "format": "json",
-            "options": {"num_ctx": self.num_ctx},
-        }
-        request = urllib.request.Request(
-            self.endpoint,
-            data=json.dumps(payload).encode("utf-8"),
-            headers={"Content-Type": "application/json"},
-            method="POST",
-        )
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}, message]
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
-                body = json.loads(response.read().decode("utf-8"))
-            content = body.get("message", {}).get("content")
-            if not isinstance(content, str):
-                raise CUAError("Ollama returned no JSON message content.")
-            decision_data = json.loads(content)
-            # Vision models may emit a whitespace-only JSON key as formatting noise.
-            # Discard only blank keys; keep rejecting all meaningful unknown fields.
-            if isinstance(decision_data, dict):
-                decision_data = {
-                    key: value
-                    for key, value in decision_data.items()
-                    if not (isinstance(key, str) and not key.strip())
+            # Local vision models sometimes return an almost-correct TaskStep but omit
+            # required fields or use "postcondition" instead of the schema's "expected".
+            # Give the model one bounded repair attempt; never guess the missing action.
+            for attempt in range(2):
+                payload = {
+                    "model": self.model,
+                    "messages": messages,
+                    "stream": False,
+                    "format": "json",
+                    "options": {"num_ctx": self.num_ctx},
                 }
-            # Some local models attach an action even after declaring the task complete.
-            # A completed/blocked decision must never dispatch that stray action.
-            if (
-                isinstance(decision_data, dict)
-                and decision_data.get("done") is True
-                and decision_data.get("step") is not None
-            ):
-                decision_data["step"] = None
-            return TaskDecision.model_validate(decision_data)
-        except ValidationError as exc:
-            response_content = locals().get("content")
-            response_excerpt = response_content[:600] if isinstance(response_content, str) else "<missing>"
-            raise CUAError(
-                "Ollama returned a task decision that does not match the required schema. "
-                f"Validation details: {exc}. Response excerpt: {response_excerpt}"
-            ) from exc
+                request = urllib.request.Request(
+                    self.endpoint,
+                    data=json.dumps(payload).encode("utf-8"),
+                    headers={"Content-Type": "application/json"},
+                    method="POST",
+                )
+                with urllib.request.urlopen(request, timeout=self.timeout_seconds) as response:
+                    body = json.loads(response.read().decode("utf-8"))
+                content = body.get("message", {}).get("content")
+                if not isinstance(content, str):
+                    raise CUAError("Ollama returned no JSON message content.")
+                decision_data = json.loads(content)
+
+                if isinstance(decision_data, dict):
+                    # Ignore formatting-only keys, but continue to reject meaningful extras.
+                    decision_data = {
+                        key: value
+                        for key, value in decision_data.items()
+                        if not (isinstance(key, str) and not key.strip())
+                    }
+                    step_data = decision_data.get("step")
+                    if isinstance(step_data, dict):
+                        # Accept the common natural-language alias, but do not infer action.
+                        if "expected" not in step_data and isinstance(step_data.get("postcondition"), dict):
+                            step_data["expected"] = step_data.pop("postcondition")
+                    # A terminal decision must never dispatch any attached action.
+                    if decision_data.get("done") is True and decision_data.get("step") is not None:
+                        decision_data["step"] = None
+
+                try:
+                    return TaskDecision.model_validate(decision_data)
+                except ValidationError as exc:
+                    if attempt == 0:
+                        validation_detail = str(exc)[:1800]
+                        previous_response = content[:3000]
+                        messages = [
+                            *messages,
+                            {"role": "assistant", "content": content},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Your previous JSON was rejected by the TaskDecision / TaskStep "
+                                    "schema. Correct it and return exactly one complete JSON object. "
+                                    "Do not omit required fields and do not invent field names.\n"
+                                    "For a non-terminal action, the top-level decision must have "
+                                    "\"done\": false and \"step\" must be an object containing "
+                                    "a required \"action\" field and a required non-empty "
+                                    "\"expected\" postcondition object. Use \"expected\", never "
+                                    "\"postcondition\". The action must be one of the allowed "
+                                    "action names. Put postcondition assertions only inside "
+                                    "\"step.expected\"; never put \"element_absent\" or other "
+                                    "assertion names directly on the step.\n"
+                                    "Example valid click step: "
+                                    "{\"done\":false,\"success\":true,\"reason\":\"Select the "
+                                    "visible ellipse tool.\",\"step\":{\"action\":\"click\","
+                                    "\"x\":600,\"y\":300,\"expected\":{\"screen_changed\":"
+                                    "{\"min_fraction\":0.001}}}}\n"
+                                    "Example valid drawing step: "
+                                    "{\"done\":false,\"success\":true,\"reason\":\"Draw the "
+                                    "circle outline.\",\"step\":{\"action\":\"draw_path\","
+                                    "\"points\":[{\"x\":600,\"y\":300},{\"x\":620,\"y\":320}],"
+                                    "\"duration_seconds\":1.0,\"expected\":{\"screen_changed\":"
+                                    "{\"min_fraction\":0.001}}}}\n"
+                                    f"Validation error: {validation_detail}\n"
+                                    f"Your previous invalid response was: {previous_response}"
+                                ),
+                            },
+                        ]
+                        continue
+                    response_excerpt = content[:600]
+                    raise CUAError(
+                        "Ollama response does not match the required schema after one correction attempt. "
+                        f"Validation details: {exc}. Response excerpt: {response_excerpt}"
+                    ) from exc
         except urllib.error.HTTPError as exc:
             # HTTPError is also a URLError, so catch it first and preserve Ollama's
-            # structured error body instead of misreporting a rejected request as a
-            # network connection failure.
+            # structured error body instead of misreporting a network connection failure.
             try:
                 error_body = exc.read().decode("utf-8", errors="replace")
             except Exception:

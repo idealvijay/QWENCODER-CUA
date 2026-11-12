@@ -210,3 +210,84 @@ def test_planner_still_rejects_meaningful_unknown_json_keys(monkeypatch):
 
     with pytest.raises(CUAError, match="does not match the required schema"):
         planner.plan_next("Describe Paint without changing anything.", observation, [])
+
+
+
+def test_planner_retries_invalid_task_step_once(monkeypatch):
+    invalid = {
+        "done": False,
+        "success": True,
+        "reason": "Select the ellipse and colour.",
+        "step": {
+            "element_absent": {"role": "radiobutton", "name": "Black"},
+            "postcondition": {
+                "element_absent": {"role": "radiobutton", "name": "White"}
+            },
+        },
+    }
+    corrected = {
+        "done": False,
+        "success": True,
+        "reason": "Select the visible ellipse tool.",
+        "step": {
+            "action": "click",
+            "x": 600,
+            "y": 300,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(invalid)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(corrected)}}),
+    ]
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(json.loads(request.data.decode("utf-8")))
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.step is not None
+    assert result.step.action == "click"
+    assert result.step.expected == {"screen_changed": {"min_fraction": 0.001}}
+    assert len(requests) == 2
+    assert any("schema" in item["content"].lower() for item in requests[1]["messages"] if item["role"] == "user")
+
+
+def test_planner_normalizes_postcondition_alias_when_step_is_otherwise_valid(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Move to the canvas.",
+        "step": {
+            "action": "move_mouse",
+            "x": 300,
+            "y": 300,
+            "postcondition": {"active_window_title_contains": "Paint"},
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Move the pointer to the canvas.", observation, [])
+
+    assert result.step.action == "move_mouse"
+    assert result.step.expected == {"active_window_title_contains": "Paint"}
+
+
+def test_prompt_requires_exact_taskstep_fields():
+    normalized = " ".join(SYSTEM_PROMPT.split())
+    assert 'required "action" field' in normalized
+    assert 'required "expected" postcondition object' in normalized
+    assert 'never use "postcondition"' in normalized

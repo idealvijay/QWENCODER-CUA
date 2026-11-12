@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.2
+- Prefer screen-change verification for coordinate-driven Paint/Photoshop interactions.
+- Ignore unsupported model-generated extra postcondition keys only when a supported screen-change check is also present.
+- Preserve all supported semantic/window assertions and continue rejecting unknown-only expectations.
+- Clarify that desktop-resolution resizing is mapped using each fresh observation's current screenshot dimensions.
+
+# Changelog
+
 ## 0.5.1
 - Treat user-provided blank-canvas state as authoritative unless visible marks clearly contradict it.
 - Prefer Paint's ellipse shape with no fill and red outline for circle requests when controls are visible.

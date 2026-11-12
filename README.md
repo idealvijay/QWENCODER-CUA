@@ -298,6 +298,8 @@ Example request after opening Paint, selecting a brush and colour, and placing P
 qwencoder-cua run-goal "Draw a red circle near the centre of the blank Paint canvas. Use a smooth closed path and verify that the canvas changes."
 ```
 
+For coordinate-driven UI selections and strokes, use a visual `screen_changed` postcondition rather than guessing that a colour swatch or tool control disappears after selection. The runner captures a fresh screenshot before every planned step and maps planner-image coordinates using that observation's current desktop width and height. If the Windows display resolution or scaling changes between tasks, start a new task so the model receives the updated screenshot dimensions.
+
 The agent is not Photoshop- or Paint-specific. It uses the visible interface to select tools where possible, then sends generic pointer paths. Layer management, native PSD object creation, text editing and app-specific shape APIs are not part of this first creative-input release. Use a test canvas or a new blank document first; generic pointer paths operate on the current foreground app and are not undo-aware.
 
 ---

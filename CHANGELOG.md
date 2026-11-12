@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.6
+- For coordinate-driven pointer actions, use the screenshot-difference postcondition as the sole visual verification oracle when present.
+- Drop model-invented semantic element checks that can fail despite a verified visible screen change.
+- Preserve combined semantic and visual checks for accessibility-driven semantic actions.
+
 ## 0.5.5
 - Detect planner hand-offs that claim another app is visible while OS metadata reports the requested Paint/Photoshop app as foreground.
 - Re-prompt once with the foreground title/process metadata and explicit screenshot reconciliation guidance.

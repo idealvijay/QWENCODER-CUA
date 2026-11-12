@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.3
+- Validate model-generated click, move, drag and draw-path coordinates against the resized vision image before accepting a planner decision.
+- When coordinates are outside image bounds, return dimensions and offending points to the model for one bounded replan.
+- Refuse a second invalid coordinate response without dispatching it.
+- Clarify that the planner must use screen_size (resized image) coordinates, never desktop_size coordinates.
+
+# Changelog
+
 ## 0.5.2
 - Prefer screen-change verification for coordinate-driven Paint/Photoshop interactions.
 - Ignore unsupported model-generated extra postcondition keys only when a supported screen-change check is also present.

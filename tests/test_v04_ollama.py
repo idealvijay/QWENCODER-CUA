@@ -8,6 +8,7 @@ import pytest
 from PIL import Image
 
 from qwencoder_cua.agent.ollama import OllamaTaskPlanner, SYSTEM_PROMPT
+from qwencoder_cua.agent.plan import TaskStep
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.models.observation import Observation, ScreenshotRef
 
@@ -360,3 +361,118 @@ def test_prompt_prefers_visual_verification_for_coordinate_ui_actions():
     normalized = " ".join(SYSTEM_PROMPT.split())
     assert "prefer exactly one reliable visual postcondition" in normalized
     assert "those controls usually remain present after being selected" in normalized
+
+
+
+def test_planner_retries_out_of_range_coordinates_once(monkeypatch):
+    invalid = {
+        "done": False,
+        "success": True,
+        "reason": "Click the ellipse tool.",
+        "step": {
+            "action": "click",
+            "x": 6000,
+            "y": 280,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    corrected = {
+        "done": False,
+        "success": True,
+        "reason": "Click the ellipse tool inside the visible ribbon.",
+        "step": {
+            "action": "click",
+            "x": 800,
+            "y": 280,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(invalid)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(corrected)}}),
+    ]
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(json.loads(request.data.decode("utf-8")))
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        screenshot=ScreenshotRef(path=None, width=3440, height=1440),
+    )
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.step is not None
+    assert result.step.action == "click"
+    assert result.step.x == 800
+    assert len(requests) == 2
+    correction = requests[1]["messages"][-1]["content"]
+    assert "Planner image dimensions" in correction
+    assert "Point 1 (6000, 280)" in correction
+
+
+def test_planner_rejects_coordinates_still_out_of_range_after_retry(monkeypatch):
+    invalid = {
+        "done": False,
+        "success": True,
+        "reason": "Click Paint.",
+        "step": {
+            "action": "click",
+            "x": 6000,
+            "y": 280,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(invalid)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(invalid)}}),
+    ]
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: responses.pop(0),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        screenshot=ScreenshotRef(path=None, width=3440, height=1440),
+    )
+
+    with pytest.raises(CUAError, match="out-of-range pointer coordinates"):
+        planner.plan_next("Draw in Paint.", observation, [])
+
+
+def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
+    size = {"width": 1280, "height": 536}
+    bad_click = TaskStep(
+        action="click", x=6000, y=280,
+        expected={"screen_changed": {"min_fraction": 0.001}},
+    )
+    assert OllamaTaskPlanner._coordinate_errors(bad_click, size)
+
+    bad_drag = TaskStep(
+        action="drag", start_x=10, start_y=10, end_x=1300, end_y=20,
+        expected={"screen_changed": {"min_fraction": 0.001}},
+    )
+    assert OllamaTaskPlanner._coordinate_errors(bad_drag, size)
+
+    bad_path = TaskStep(
+        action="draw_path",
+        points=[{"x": 20, "y": 20}, {"x": 1300, "y": 20}],
+        expected={"screen_changed": {"min_fraction": 0.001}},
+    )
+    assert OllamaTaskPlanner._coordinate_errors(bad_path, size) == [
+        "Point 2 (1300, 20) is outside 0<=x<1280, 0<=y<536."
+    ]
+
+
+def test_prompt_has_strict_planner_image_coordinate_bounds():
+    normalized = " ".join(SYSTEM_PROMPT.split())
+    assert "0 <= x < screen_size.width" in normalized
+    assert "Coordinates returned in actions MUST use" in normalized
+    assert "do not guess" in normalized

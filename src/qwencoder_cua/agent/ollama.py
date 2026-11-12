@@ -16,6 +16,41 @@ from qwencoder_cua.models.observation import Observation
 from qwencoder_cua.agent.coordinates import planner_image_dimensions
 
 
+def _normalize_draw_path_points(step_data: dict[str, Any]) -> None:
+    """Normalize common coordinate-pair encodings without changing the point limit."""
+    if step_data.get("action") != "draw_path":
+        return
+    points = step_data.get("points")
+    if not isinstance(points, list) or not points:
+        return
+
+    def is_number(value: Any) -> bool:
+        return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+    # Some vision models emit [x1, y1, x2, y2, ...] instead of the documented
+    # [{"x": x1, "y": y1}, ...] structure. Pair it only when every value is numeric
+    # and the list has an unambiguous even length. TaskStep still enforces 2-64 points.
+    if all(is_number(value) for value in points):
+        if len(points) % 2 == 0:
+            step_data["points"] = [
+                {"x": points[index], "y": points[index + 1]}
+                for index in range(0, len(points), 2)
+            ]
+        return
+
+    # Also accept the equivalent [[x1, y1], [x2, y2], ...] representation.
+    if all(
+        isinstance(pair, (list, tuple))
+        and len(pair) == 2
+        and is_number(pair[0])
+        and is_number(pair[1])
+        for pair in points
+    ):
+        step_data["points"] = [
+            {"x": pair[0], "y": pair[1]} for pair in points
+        ]
+
+
 SYSTEM_PROMPT = """You are the planning component of QWENCODER CUA, a local desktop automation agent.
 Return exactly one JSON object matching:
 {"done": boolean, "success": boolean, "reason": string, "step": TaskStep object or null}
@@ -48,7 +83,7 @@ Allowed actions:
 - set_element_value: selector and value
 - move_mouse: x, y
 - drag: start_x, start_y, end_x, end_y, optional button and duration_seconds
-- draw_path: points (2-64 {x, y} waypoints), optional button and duration_seconds
+- draw_path: points (2-64 objects, each exactly {"x": int, "y": int}), optional button and duration_seconds
 
 Pointer coordinates are measured in the resized image shown to you (the
 `screen_size` field), not the full desktop. The runner automatically maps them to desktop
@@ -74,9 +109,14 @@ Normal UI setup is part of the task, not a blocker: selecting a colour, brush, s
 then using it are actions for you to perform. When the target application is active, never return
 a terminal failure saying the user must select a colour/tool/shape or click the canvas if those
 controls can be operated with the allowed actions. Instead, return one concrete next UI action.
-For a circle in Paint, prefer the built-in ellipse shape with no fill and a red outline if those
-controls are visible; otherwise use a closed draw_path. Do not claim a tool or shape is absent
-without checking the screenshot and accessible elements.
+For a circle in Paint, strongly prefer the built-in Ellipse/Oval shape when it is visibly
+available: set no fill and a red outline, then use one drag for the circle's bounding box. Only
+use a closed draw_path when no suitable built-in ellipse control is visible. For a freehand circle,
+use 12-24 evenly distributed waypoints around one smooth circumference. Every point MUST be a
+JSON object with integer x and y fields, for example "points":[{"x":600,"y":300},
+{"x":620,"y":280}]. Never return a flat number list or nested coordinate arrays. Do not produce
+stair-step, zigzag, rectangular, or repeated-point paths. Do not exceed 64 waypoints. Do not claim
+a tool or shape is absent without checking the screenshot and accessible elements.
 
 For a Paint/Photoshop stroke, identify the drawable canvas first. Use draw_path (one atomic
 press/move/release) for a freehand path; use drag for a straight drag or a native
@@ -224,6 +264,7 @@ class OllamaTaskPlanner:
                     }
                     step_data = decision_data.get("step")
                     if isinstance(step_data, dict):
+                        _normalize_draw_path_points(step_data)
                         # Accept the common natural-language alias, but do not infer action.
                         if "expected" not in step_data and isinstance(step_data.get("postcondition"), dict):
                             step_data["expected"] = step_data.pop("postcondition")
@@ -366,6 +407,11 @@ class OllamaTaskPlanner:
                                     "\"points\":[{\"x\":600,\"y\":300},{\"x\":620,\"y\":320}],"
                                     "\"duration_seconds\":1.0,\"expected\":{\"screen_changed\":"
                                     "{\"min_fraction\":0.001}}}}\n"
+                                    "For draw_path, points MUST be JSON objects with x and y fields, "
+                                    "never a flat list such as [600,300,620,320] or nested arrays. "
+                                    "A smooth circle should use 12-24 evenly spaced points and never "
+                                    "more than 64 points. Rewrite every coordinate pair as one "
+                                    "{\\\"x\\\": number, \\\"y\\\": number} object.\n"
                                     f"Validation error: {validation_detail}\n"
                                     f"Your previous invalid response was: {previous_response}"
                                 ),

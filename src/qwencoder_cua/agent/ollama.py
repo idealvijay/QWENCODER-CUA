@@ -248,24 +248,30 @@ class OllamaTaskPlanner:
                     decision = TaskDecision.model_validate(decision_data)
                     if self._is_manual_ui_handoff(goal, observation, decision):
                         if attempt == 0:
+                            active = observation.active_window
+                            active_identity = (
+                                f"title={active.title!r}, process={active.process_name!r}"
+                                if active else "unknown"
+                            )
                             messages = [
                                 *messages,
                                 {"role": "assistant", "content": content},
                                 {
                                     "role": "user",
                                     "content": (
-                                        "The target application is already active. Your previous "
-                                        "terminal response incorrectly handed normal UI work to the "
-                                        "user. You are the desktop operator: select visible colours, "
-                                        "tools and shapes yourself, one allowed action per response. "
-                                        "Do not tell the user to select a colour/tool/shape or click "
-                                        "the canvas. Re-examine the same screenshot and accessibility "
-                                        "context, then return exactly one concrete next action with "
-                                        "a valid expected postcondition. For a red circle in Paint, "
-                                        "select red if needed, select the ellipse shape if available, "
-                                        "then drag inside the canvas on subsequent observations. "
-                                        "Do not claim an action has happened until it is dispatched "
-                                        "and verified. Only stop if a real blocker is visible.\n"
+                                        "Your terminal response conflicts with platform window metadata. "
+                                        f"The OS foreground-window API reports: {active_identity}. "
+                                        "This metadata identifies the foreground window, but it does "
+                                        "not prove that its contents are visible in the screenshot. "
+                                        "Re-examine the attached screenshot carefully. If Paint is "
+                                        "visibly present, continue the drawing task with one concrete "
+                                        "allowed action; do not tell the user to switch applications. "
+                                        "If the screenshot genuinely shows a different app covering "
+                                        "Paint or does not contain Paint, stop safely and report a "
+                                        "screenshot/window mismatch; do not send clicks to an unknown "
+                                        "surface. For normal setup, you must select visible colours, "
+                                        "tools and shapes yourself, one action per response. Do not "
+                                        "claim an action has happened until dispatched and verified.\n"
                                         f"Previous terminal response: {decision.reason}"
                                     ),
                                 },
@@ -275,8 +281,10 @@ class OllamaTaskPlanner:
                             done=True,
                             success=False,
                             reason=(
-                                "The planner still asked for manual UI input after one correction. "
-                                "No desktop action was dispatched. Model response: "
+                                "The model could not reconcile the foreground-window metadata with "
+                                "the screenshot after one correction. No desktop action was "
+                                "dispatched. Verify that Paint is visible on the captured desktop "
+                                "and rerun the task. Model response: "
                                 f"{decision.reason}"
                             ),
                             step=None,
@@ -398,8 +406,15 @@ class OllamaTaskPlanner:
                 "you need to select", "please select", "manually select",
                 "user must click", "you must click", "please click",
                 "user must choose", "you must choose",
+                "user must switch", "you must switch", "user needs to switch",
+                "you need to switch", "please switch", "switch to the paint",
+                "switch back to paint", "different application is shown",
+                "different app is shown", "target application is not the paint app",
             )
         )
+        # Some vision responses contradict the OS foreground-window metadata and
+        # tell the user to switch applications. Treat this as a hand-off to reconcile,
+        # but only when the OS metadata itself confirms the named target application.
         if not asks_user_to_operate_ui:
             return False
 

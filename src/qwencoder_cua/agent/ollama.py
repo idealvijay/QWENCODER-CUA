@@ -14,6 +14,7 @@ from qwencoder_cua.agent.plan import TaskDecision, TaskStep
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.models.observation import Observation
 from qwencoder_cua.agent.coordinates import planner_image_dimensions
+from qwencoder_cua.perception import TargetDetector
 
 
 def _normalize_draw_path_points(step_data: dict[str, Any]) -> None:
@@ -79,6 +80,7 @@ Allowed actions:
 - press_key: key (examples: enter, tab, ctrl+c)
 - scroll: dx and/or dy
 - click_element: selector
+- click_target: target_id (an exact ID from available_targets)
 - focus_element: selector
 - set_element_value: selector and value
 - move_mouse: x, y
@@ -154,6 +156,12 @@ Every step MUST include a non-empty expected postcondition. Supported postcondit
 - {"active_window_title_contains": "..."}
 - {"screen_changed": {"min_fraction": 0.01}}
 
+When available_targets contains a suitable named target, prefer click_target with its exact
+target_id instead of estimating x/y. The runner resolves that ID again against a fresh screenshot
+immediately before clicking; never provide coordinates with click_target. If the target is absent
+or confidence is insufficient, use a different visible target or a coordinate click grounded in
+the screenshot. Target IDs are observation-scoped hints, not durable coordinates.
+
 Prefer accessibility selectors with stable automation_id and parent_name. Use screen coordinates
 only when accessibility elements cannot identify the target. Do not invent controls or assume an
 action succeeded; inspect the next observation and plan again. Do not use a no-op title check as
@@ -223,6 +231,9 @@ class OllamaTaskPlanner:
                 if observation.screenshot else None
             ),
             "accessible_elements": elements,
+            "available_targets": TargetDetector().detect(observation).prompt_context(
+                observation_id=observation.observation_id
+            )[:80],
             "completed_steps": [item.model_dump() for item in history[-12:]],
         }
         message = {"role": "user", "content": json.dumps(context, ensure_ascii=False)}
@@ -279,7 +290,7 @@ class OllamaTaskPlanner:
                             # interaction clearly changed the screen. For pointer actions, use
                             # the visual assertion alone. Semantic actions may retain supported
                             # semantic postconditions because those are their intended oracle.
-                            pointer_actions = {"click", "move_mouse", "drag", "draw_path"}
+                            pointer_actions = {"click", "click_target", "move_mouse", "drag", "draw_path"}
                             if step_data.get("action") in pointer_actions:
                                 step_data["expected"] = {
                                     "screen_changed": expected["screen_changed"]

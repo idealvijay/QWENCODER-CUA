@@ -799,7 +799,7 @@ def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
         "reason": "Draw the circle outline.",
         "step": {
             "action": "draw_path",
-            "points": [600, 200, 620, 180, 640, 200, 620, 220],
+            "points": [coordinate for index in range(37) for coordinate in (600 + index, 200 + index)],
             "duration_seconds": 1.0,
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
@@ -821,8 +821,9 @@ def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
 
     assert result.step is not None
     assert result.step.action == "draw_path"
-    assert [(point.x, point.y) for point in result.step.points] == [
-        (600, 200), (620, 180), (640, 200), (620, 220)
+    assert len(result.step.points) == 37
+    assert [(point.x, point.y) for point in result.step.points[:3]] == [
+        (600, 200), (601, 201), (602, 202)
     ]
 
 

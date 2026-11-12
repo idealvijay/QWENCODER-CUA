@@ -27,7 +27,7 @@ class ColorSwatchDetector:
         rgb: tuple[int, int, int],
         tolerance: int = 28,
         minimum_area: int = 16,
-        maximum_area_fraction: float = 0.08,
+        maximum_area_fraction: float = 0.12,
         maximum_results: int = 8,
     ) -> list[UITarget]:
         if not observation_id or not color_name.strip():

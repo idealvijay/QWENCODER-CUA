@@ -89,7 +89,7 @@ class TargetRegistry:
                 "enabled": target.enabled,
             }
             for target in self._targets.values()
-            if target.visible
+            if target.visible and target.enabled
         ]
 
     def all(self, *, observation_id: str) -> list[UITarget]:

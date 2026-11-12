@@ -390,16 +390,15 @@ class OllamaTaskPlanner:
         if active is None or not active.is_active:
             return False
 
-        import re
-
         reason = decision.reason.casefold()
-        asks_user_to_operate_ui = bool(
-            re.search(
-                r"\\b(?:user|you)\\s+(?:must|need to|have to|should)\\s+"
-                r"(?:select|choose|click|press|drag)\\b",
-                reason,
+        asks_user_to_operate_ui = any(
+            phrase in reason
+            for phrase in (
+                "user must select", "user needs to select", "you must select",
+                "you need to select", "please select", "manually select",
+                "user must click", "you must click", "please click",
+                "user must choose", "you must choose",
             )
-            or re.search(r"\\bplease\\s+(?:select|choose|click|press|drag)\\b", reason)
         )
         if not asks_user_to_operate_ui:
             return False

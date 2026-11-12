@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from collections import deque
 from pathlib import Path
-from typing import BinaryIO
-
 from PIL import Image
 
 from qwencoder_cua.models.geometry import Rect
@@ -98,7 +96,9 @@ class ColorSwatchDetector:
 
             candidates.sort(key=lambda item: item[0], reverse=True)
             results: list[UITarget] = []
-            for index, (area, left, top, box_width, box_height) in enumerate(candidates[:maximum_results], start=1):
+            for index, (area, left, top, box_width, box_height) in enumerate(
+                candidates[:maximum_results], start=1
+            ):
                 confidence = min(0.99, 0.70 + 0.29 * (area / max(box_width * box_height, 1)))
                 suffix = "" if index == 1 else f".{index}"
                 results.append(UITarget(

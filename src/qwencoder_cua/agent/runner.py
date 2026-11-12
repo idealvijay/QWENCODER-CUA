@@ -52,6 +52,8 @@ class TaskRunner:
         run_id = uuid4().hex
         clock_start = time.monotonic()
         history: list[TaskStepResult] = []
+        no_change_click_replans = 0
+        max_no_change_click_replans = 1
 
         for index in range(1, self.policy.max_steps + 2):
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
@@ -98,16 +100,59 @@ class TaskRunner:
             step_result = step_runner.execute(
                 step_plan, approve=wrapped_approval, coordinate_space="planner_image"
             )
-            history.extend(step_result.steps)
             if not step_result.success:
+                if (
+                    no_change_click_replans < max_no_change_click_replans
+                    and self._can_replan_after_no_change(goal, decision.step, step_result)
+                ):
+                    no_change_click_replans += 1
+                    # Preserve the failed attempt in planner history and include its
+                    # planner-image point so the model can inspect the fresh screenshot
+                    # without blindly repeating the same click.
+                    failed = step_result.steps[-1]
+                    failed = failed.model_copy(update={
+                        "message": (
+                            f"{failed.message} Last attempted planner-image point: "
+                            f"({decision.step.x}, {decision.step.y}). "
+                            "This click had no detected visual effect; re-inspect the screen "
+                            "and do not repeat this point."
+                        )
+                    })
+                    history.extend([*step_result.steps[:-1], failed])
+                    continue
+                history.extend(step_result.steps)
                 return self._run_result(
                     run_id, goal, False, step_result.status, history,
                     step_result.message, started,
                 )
+            history.extend(step_result.steps)
 
         return self._run_result(
             run_id, goal, False, "timed_out", history,
             f"Planner did not finish within the {self.policy.max_steps}-step limit.", started,
+        )
+
+    @staticmethod
+    def _can_replan_after_no_change(
+        goal: str, step: TaskStep, result: TaskRunResult
+    ) -> bool:
+        """Allow one fresh planner observation after an ineffective Paint setup click."""
+        task = goal.casefold()
+        is_paint_drawing = (
+            "paint" in task
+            and any(word in task for word in ("draw", "circle", "ellipse", "shape", "sketch"))
+        )
+        if not is_paint_drawing or step.action != "click":
+            return False
+        if "screen_changed" not in step.expected or result.status != "failed":
+            return False
+        if len(result.steps) != 1:
+            return False
+        attempt = result.steps[0]
+        return (
+            attempt.dispatched
+            and not attempt.verified
+            and "Changed pixels: 0.0%" in attempt.message
         )
 
     def execute(

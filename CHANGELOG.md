@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.5.8
+- Normalize flattened numeric coordinate pairs and two-item coordinate arrays into draw-path point objects.
+- Preserve the 2-64 waypoint validation limit; never truncate oversized paths.
+- Strengthen vision-planner guidance for smooth circles, preferring Paint's native ellipse tool and limiting freehand circles to 12-24 evenly spaced waypoints.
+
+## 0.5.7
+- Permit one fresh observe/replan cycle after a Paint drawing setup click is dispatched but produces no detected screen change.
+- Include the failed click point in planner history and instruct the model not to repeat it.
+- Keep the recovery bounded to one retry and only for Paint drawing goals; other failed actions retain fail-fast behavior.
+
 ## 0.5.6
 - For coordinate-driven pointer actions, use the screenshot-difference postcondition as the sole visual verification oracle when present.
 - Drop model-invented semantic element checks that can fail despite a verified visible screen change.

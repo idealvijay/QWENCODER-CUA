@@ -70,6 +70,10 @@ you can identify specific visible marks inside the canvas itself. Ignore colour 
 tool icons, selection handles and other UI elements when assessing whether the canvas contains
 artwork. If the requested tool or colour is not selected, use visible, unambiguous controls to
 select it as normal planner steps; do not ask the user to do this when controls are visible.
+Normal UI setup is part of the task, not a blocker: selecting a colour, brush, shape or tool and
+then using it are actions for you to perform. When the target application is active, never return
+a terminal failure saying the user must select a colour/tool/shape or click the canvas if those
+controls can be operated with the allowed actions. Instead, return one concrete next UI action.
 For a circle in Paint, prefer the built-in ellipse shape with no fill and a red outline if those
 controls are visible; otherwise use a closed draw_path. Do not claim a tool or shape is absent
 without checking the screenshot and accessible elements.
@@ -242,6 +246,41 @@ class OllamaTaskPlanner:
 
                 try:
                     decision = TaskDecision.model_validate(decision_data)
+                    if self._is_manual_ui_handoff(goal, observation, decision):
+                        if attempt == 0:
+                            messages = [
+                                *messages,
+                                {"role": "assistant", "content": content},
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "The target application is already active. Your previous "
+                                        "terminal response incorrectly handed normal UI work to the "
+                                        "user. You are the desktop operator: select visible colours, "
+                                        "tools and shapes yourself, one allowed action per response. "
+                                        "Do not tell the user to select a colour/tool/shape or click "
+                                        "the canvas. Re-examine the same screenshot and accessibility "
+                                        "context, then return exactly one concrete next action with "
+                                        "a valid expected postcondition. For a red circle in Paint, "
+                                        "select red if needed, select the ellipse shape if available, "
+                                        "then drag inside the canvas on subsequent observations. "
+                                        "Do not claim an action has happened until it is dispatched "
+                                        "and verified. Only stop if a real blocker is visible.\n"
+                                        f"Previous terminal response: {decision.reason}"
+                                    ),
+                                },
+                            ]
+                            continue
+                        return TaskDecision(
+                            done=True,
+                            success=False,
+                            reason=(
+                                "The planner still asked for manual UI input after one correction. "
+                                "No desktop action was dispatched. Model response: "
+                                f"{decision.reason}"
+                            ),
+                            step=None,
+                        )
                     coordinate_errors = self._coordinate_errors(
                         decision.step, context.get("screen_size")
                     )
@@ -339,6 +378,47 @@ class OllamaTaskPlanner:
             raise CUAError(f"Could not reach local Ollama at {self.endpoint}: {exc}") from exc
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise CUAError(f"Ollama returned an invalid task decision: {exc}") from exc
+
+    @staticmethod
+    def _is_manual_ui_handoff(
+        goal: str, observation: Observation, decision: TaskDecision
+    ) -> bool:
+        """Detect a terminal refusal that delegates normal drawing UI setup to the user."""
+        if not decision.done or decision.success:
+            return False
+        active = observation.active_window
+        if active is None or not active.is_active:
+            return False
+
+        import re
+
+        reason = decision.reason.casefold()
+        asks_user_to_operate_ui = bool(
+            re.search(
+                r"\\b(?:user|you)\\s+(?:must|need to|have to|should)\\s+"
+                r"(?:select|choose|click|press|drag)\\b",
+                reason,
+            )
+            or re.search(r"\\bplease\\s+(?:select|choose|click|press|drag)\\b", reason)
+        )
+        if not asks_user_to_operate_ui:
+            return False
+
+        task = goal.casefold()
+        if not any(word in task for word in ("draw", "circle", "ellipse", "shape", "sketch", "stroke")):
+            return False
+
+        # Do not override a legitimate foreground-window hand-off. If the task names
+        # Paint/Photoshop, confirm that the active window belongs to that application.
+        window_identity = f"{active.title} {active.process_name or ''}".casefold()
+        app_aliases = {
+            "paint": ("paint", "mspaint"),
+            "photoshop": ("photoshop",),
+        }
+        for app, aliases in app_aliases.items():
+            if app in task and not any(alias in window_identity for alias in aliases):
+                return False
+        return True
 
     @staticmethod
     def _coordinate_errors(step: TaskStep | None, screen_size: dict | None) -> list[str]:

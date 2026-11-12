@@ -113,12 +113,16 @@ class TaskRunner:
                     # planner-image point so the model can inspect the fresh screenshot
                     # without blindly repeating the same click.
                     failed = step_result.steps[-1]
+                    attempted = (
+                        f"planner-image point ({decision.step.x}, {decision.step.y})"
+                        if decision.step.action == "click"
+                        else f"named target {decision.step.target_id!r}"
+                    )
                     failed = failed.model_copy(update={
                         "message": (
-                            f"{failed.message} Last attempted planner-image point: "
-                            f"({decision.step.x}, {decision.step.y}). "
+                            f"{failed.message} Last attempted {attempted}. "
                             "This click had no detected visual effect; re-inspect the screen "
-                            "and do not repeat this point."
+                            "and do not repeat the same target or point."
                         )
                     })
                     history.extend([*step_result.steps[:-1], failed])
@@ -145,7 +149,7 @@ class TaskRunner:
             "paint" in task
             and any(word in task for word in ("draw", "circle", "ellipse", "shape", "sketch"))
         )
-        if not is_paint_drawing or step.action != "click":
+        if not is_paint_drawing or step.action not in {"click", "click_target"}:
             return False
         if "screen_changed" not in step.expected or result.status != "failed":
             return False

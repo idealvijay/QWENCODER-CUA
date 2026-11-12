@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.5
+- Detect planner hand-offs that claim another app is visible while OS metadata reports the requested Paint/Photoshop app as foreground.
+- Re-prompt once with the foreground title/process metadata and explicit screenshot reconciliation guidance.
+- If the screenshot/window conflict remains unresolved, fail safely without dispatching an input action.
+- Preserve legitimate app-switch hand-offs when another application is actually foreground.
+
 ## 0.5.4
 - Detect terminal vision-model responses that incorrectly ask the user to perform normal Paint drawing setup while Paint is already active.
 - Re-prompt the model once to produce a concrete allowed UI action; preserve manual foreground-window hand-offs and stop safely if the model repeats the hand-off.

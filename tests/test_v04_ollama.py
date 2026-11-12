@@ -789,3 +789,112 @@ def test_planner_preserves_semantic_postconditions_for_semantic_actions(monkeypa
         "screen_changed": {"min_fraction": 0.001},
         "element_present": {"role": "button", "name": "Ellipse"},
     }
+
+
+
+def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Draw the circle outline.",
+        "step": {
+            "action": "draw_path",
+            "points": [600, 200, 620, 180, 640, 200, 620, 220],
+            "duration_seconds": 1.0,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        screenshot=ScreenshotRef(path=None, width=1280, height=800),
+    )
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.step is not None
+    assert result.step.action == "draw_path"
+    assert [(point.x, point.y) for point in result.step.points] == [
+        (600, 200), (620, 180), (640, 200), (620, 220)
+    ]
+
+
+def test_planner_normalizes_pair_array_draw_path_coordinates(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Draw a short path.",
+        "step": {
+            "action": "draw_path",
+            "points": [[600, 200], [620, 220]],
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        screenshot=ScreenshotRef(path=None, width=1280, height=800),
+    )
+
+    result = planner.plan_next("Draw a short path.", observation, [])
+
+    assert result.step is not None
+    assert [(point.x, point.y) for point in result.step.points] == [(600, 200), (620, 220)]
+
+
+def test_planner_does_not_truncate_draw_path_over_64_waypoints(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Draw a path.",
+        "step": {
+            "action": "draw_path",
+            "points": [coordinate for index in range(65) for coordinate in (index, index)],
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(decision)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(decision)}}),
+    ]
+    calls = []
+
+    def fake_urlopen(*args, **kwargs):
+        calls.append(1)
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        screenshot=ScreenshotRef(path=None, width=1280, height=800),
+    )
+
+    with pytest.raises(CUAError, match="does not match the required schema") as caught:
+        planner.plan_next("Draw a path.", observation, [])
+
+    assert "at most 64 items" in str(caught.value)
+    assert len(calls) == 2
+
+
+def test_prompt_requires_object_waypoints_and_prefers_native_paint_ellipse():
+    normalized = " ".join(SYSTEM_PROMPT.split())
+    assert 'points (2-64 objects, each exactly {"x": int, "y": int})' in normalized
+    assert "strongly prefer the built-in Ellipse/Oval shape" in normalized
+    assert "12-24 evenly distributed waypoints" in normalized
+    assert "Never return a flat number list or nested coordinate arrays." in normalized

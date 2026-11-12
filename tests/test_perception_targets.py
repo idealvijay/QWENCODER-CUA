@@ -9,6 +9,7 @@ from qwencoder_cua.models.window import WindowInfo
 from qwencoder_cua.perception.accessibility_detector import AccessibilityTargetDetector
 from qwencoder_cua.perception.color_detector import ColorSwatchDetector
 from qwencoder_cua.perception.target_registry import TargetRegistry
+from qwencoder_cua.perception.target_detector import TargetDetector
 
 
 def test_accessibility_detector_assigns_named_paint_target_ids():
@@ -37,8 +38,6 @@ def test_accessibility_detector_assigns_named_paint_target_ids():
     targets = AccessibilityTargetDetector().detect(observation)
 
     assert [target.target_id for target in targets] == [
-        "paint.color.red", "paint.shape.ellipse", "paint.canvas-canvas"
-    ] or [target.target_id for target in targets] == [
         "paint.color.red", "paint.shape.ellipse", "paint.canvas.canvas"
     ]
     assert [target.kind for target in targets] == ["color", "shape", "canvas"]
@@ -116,3 +115,23 @@ def test_color_swatch_detector_finds_target_only_inside_requested_palette_region
     assert targets[0].target_id == "paint.color.red"
     assert targets[0].bounds == Rect(x=20, y=20, width=20, height=20)
     assert targets[0].center.model_dump() == {"x": 30, "y": 30}
+
+
+
+def test_combined_target_detector_merges_visual_and_accessibility_targets():
+    observation = Observation(observation_id="obs-1", platform="windows")
+    visual_target = UITarget(
+        target_id="paint.color.red",
+        label="Red colour swatch",
+        kind="color",
+        bounds=Rect(x=10, y=10, width=12, height=12),
+        observation_id="obs-1",
+        source="vision",
+        confidence=0.95,
+    )
+    registry = TargetDetector().detect(
+        observation, additional_targets=[visual_target]
+    )
+    assert registry.resolve(
+        "paint.color.red", observation_id="obs-1"
+    ).source == "vision"

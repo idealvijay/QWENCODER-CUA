@@ -72,6 +72,13 @@ press/move/release) for a freehand path; use drag for a straight drag or a nativ
 ellipse/rectangle tool gesture. A draw_path or drag action must request a screen_changed
 postcondition, normally with min_fraction 0.001.
 
+For coordinate-based UI clicks, brush strokes and shape gestures, prefer exactly one
+reliable visual postcondition: `"expected": {"screen_changed": {"min_fraction": 0.001}}`.
+Do not add guessed semantic assertions such as `element_absent` for colour swatches or tools:
+those controls usually remain present after being selected. If the model cannot confirm a
+semantic state from accessibility values, use the visual change check and inspect the next
+screenshot before planning another action.
+
 A non-terminal response MUST use this exact structure (no wrapper keys):
 {"done": false, "success": true, "reason": "Why this one action is next.", "step": {
   "action": "click", "x": 600, "y": 300,
@@ -205,6 +212,23 @@ class OllamaTaskPlanner:
                         # Accept the common natural-language alias, but do not infer action.
                         if "expected" not in step_data and isinstance(step_data.get("postcondition"), dict):
                             step_data["expected"] = step_data.pop("postcondition")
+
+                        expected = step_data.get("expected")
+                        if isinstance(expected, dict) and "screen_changed" in expected:
+                            # A valid screenshot-difference assertion is sufficient for a
+                            # coordinate-driven UI interaction. Local vision models sometimes
+                            # append malformed semantic aliases (e.g. "element_abs") or
+                            # contradictory guesses about controls that remain visible after
+                            # selection. Drop only unsupported extras in this case; retain all
+                            # supported checks and keep unknown-only expectations invalid.
+                            supported = {
+                                "active_window_title_contains", "screen_changed",
+                                "element_absent", "element_present", "element_value",
+                            }
+                            step_data["expected"] = {
+                                key: value for key, value in expected.items()
+                                if key in supported
+                            }
                     # A terminal decision must never dispatch any attached action.
                     if decision_data.get("done") is True and decision_data.get("step") is not None:
                         decision_data["step"] = None

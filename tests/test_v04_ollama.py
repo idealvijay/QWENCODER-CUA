@@ -291,3 +291,72 @@ def test_prompt_requires_exact_taskstep_fields():
     assert "action field is mandatory" in normalized
     assert "non-empty expected postcondition" in normalized
     assert 'never use "postcondition"' in normalized
+
+
+
+def test_planner_drops_unsupported_semantic_alias_when_screen_change_is_valid(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Select the ellipse tool.",
+        "step": {
+            "action": "click",
+            "x": 700,
+            "y": 300,
+            "expected": {
+                "screen_changed": {"min_fraction": 0.001},
+                "element_abs": {"role": "radiobutton", "name": "Black"},
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Select the Paint ellipse tool.", observation, [])
+
+    assert result.step is not None
+    assert result.step.expected == {"screen_changed": {"min_fraction": 0.001}}
+
+
+def test_planner_preserves_supported_semantic_checks_alongside_screen_change(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Click a visible control.",
+        "step": {
+            "action": "click",
+            "x": 700,
+            "y": 300,
+            "expected": {
+                "screen_changed": {"min_fraction": 0.001},
+                "active_window_title_contains": "Paint",
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Click a Paint control.", observation, [])
+
+    assert result.step.expected == {
+        "screen_changed": {"min_fraction": 0.001},
+        "active_window_title_contains": "Paint",
+    }
+
+
+def test_prompt_prefers_visual_verification_for_coordinate_ui_actions():
+    normalized = " ".join(SYSTEM_PROMPT.split())
+    assert "prefer exactly one reliable visual postcondition" in normalized
+    assert "those controls usually remain present after being selected" in normalized

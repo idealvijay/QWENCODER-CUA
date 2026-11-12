@@ -530,7 +530,7 @@ def test_planner_retries_manual_paint_ui_handoff_when_paint_is_active(monkeypatc
     assert result.step.action == "click"
     assert len(requests) == 2
     correction = requests[1]["messages"][-1]["content"].lower()
-    assert "target application is already active" in correction
+    assert "os foreground-window api reports" in correction
     assert "do not tell the user" in correction
 
 

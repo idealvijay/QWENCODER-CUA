@@ -61,8 +61,8 @@ class TaskStep(BaseModel):
             raise ValueError("press_key requires key")
         if self.action in {"click_element", "focus_element", "set_element_value"} and self.selector is None:
             raise ValueError(f"{self.action} requires a semantic selector")
-        if self.action == "click_target" and not self.target_id:
-            raise ValueError("click_target requires target_id")
+        if self.action == "click_target" and not (self.target_id and self.target_id.strip()):
+            raise ValueError("click_target requires a non-empty target_id")
         if self.action != "click_target" and self.target_id is not None:
             raise ValueError("target_id is only valid for click_target")
         if self.action == "set_element_value" and self.value is None:

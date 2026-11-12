@@ -330,11 +330,10 @@ def test_planner_preserves_supported_semantic_checks_alongside_screen_change(mon
     decision = {
         "done": False,
         "success": True,
-        "reason": "Click a visible control.",
+        "reason": "Activate a semantic Paint control.",
         "step": {
-            "action": "click",
-            "x": 700,
-            "y": 300,
+            "action": "click_element",
+            "selector": {"role": "button", "name": "Paint control"},
             "expected": {
                 "screen_changed": {"min_fraction": 0.001},
                 "active_window_title_contains": "Paint",
@@ -350,7 +349,7 @@ def test_planner_preserves_supported_semantic_checks_alongside_screen_change(mon
     planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
     observation = Observation(observation_id="obs", platform="windows")
 
-    result = planner.plan_next("Click a Paint control.", observation, [])
+    result = planner.plan_next("Activate a semantic Paint control.", observation, [])
 
     assert result.step.expected == {
         "screen_changed": {"min_fraction": 0.001},
@@ -727,3 +726,66 @@ def test_planner_reports_unresolved_paint_screenshot_mismatch_safely(monkeypatch
     assert len(calls) == 2
     assert "screenshot/window mismatch" in result.reason.lower()
     assert "no desktop action was dispatched" in result.reason.lower()
+
+
+
+def test_planner_drops_semantic_postconditions_for_pointer_actions(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Select the red swatch.",
+        "step": {
+            "action": "click",
+            "x": 430,
+            "y": 88,
+            "expected": {
+                "screen_changed": {"min_fraction": 0.001},
+                "element_present": {"role": "button", "name": "Red"},
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Select red in Paint.", observation, [])
+
+    assert result.step is not None
+    assert result.step.expected == {"screen_changed": {"min_fraction": 0.001}}
+
+
+def test_planner_preserves_semantic_postconditions_for_semantic_actions(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Activate the ellipse control.",
+        "step": {
+            "action": "click_element",
+            "selector": {"role": "button", "name": "Ellipse"},
+            "expected": {
+                "screen_changed": {"min_fraction": 0.001},
+                "element_present": {"role": "button", "name": "Ellipse"},
+            },
+        },
+    }
+    monkeypatch.setattr(
+        "urllib.request.urlopen",
+        lambda *args, **kwargs: FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        }),
+    )
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Activate the ellipse control.", observation, [])
+
+    assert result.step is not None
+    assert result.step.expected == {
+        "screen_changed": {"min_fraction": 0.001},
+        "element_present": {"role": "button", "name": "Ellipse"},
+    }

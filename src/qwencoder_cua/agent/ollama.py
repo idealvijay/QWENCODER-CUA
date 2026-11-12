@@ -226,20 +226,28 @@ class OllamaTaskPlanner:
 
                         expected = step_data.get("expected")
                         if isinstance(expected, dict) and "screen_changed" in expected:
-                            # A valid screenshot-difference assertion is sufficient for a
-                            # coordinate-driven UI interaction. Local vision models sometimes
-                            # append malformed semantic aliases (e.g. "element_abs") or
-                            # contradictory guesses about controls that remain visible after
-                            # selection. Drop only unsupported extras in this case; retain all
-                            # supported checks and keep unknown-only expectations invalid.
-                            supported = {
-                                "active_window_title_contains", "screen_changed",
-                                "element_absent", "element_present", "element_value",
-                            }
-                            step_data["expected"] = {
-                                key: value for key, value in expected.items()
-                                if key in supported
-                            }
+                            # A visual screenshot-difference check is the reliable oracle for
+                            # coordinate-driven UI input. MiniCPM often invents semantic element
+                            # assertions for controls that are not exposed by UI Automation or
+                            # that remain present after selection. Combining those assertions
+                            # with screen_changed makes verification fail even when the visual
+                            # interaction clearly changed the screen. For pointer actions, use
+                            # the visual assertion alone. Semantic actions may retain supported
+                            # semantic postconditions because those are their intended oracle.
+                            pointer_actions = {"click", "move_mouse", "drag", "draw_path"}
+                            if step_data.get("action") in pointer_actions:
+                                step_data["expected"] = {
+                                    "screen_changed": expected["screen_changed"]
+                                }
+                            else:
+                                supported = {
+                                    "active_window_title_contains", "screen_changed",
+                                    "element_absent", "element_present", "element_value",
+                                }
+                                step_data["expected"] = {
+                                    key: value for key, value in expected.items()
+                                    if key in supported
+                                }
                     # A terminal decision must never dispatch any attached action.
                     if decision_data.get("done") is True and decision_data.get("step") is not None:
                         decision_data["step"] = None

@@ -88,7 +88,11 @@ reliable visual postcondition: `"expected": {"screen_changed": {"min_fraction": 
 Do not add guessed semantic assertions such as `element_absent` for colour swatches or tools:
 those controls usually remain present after being selected. If the model cannot confirm a
 semantic state from accessibility values, use the visual change check and inspect the next
-screenshot before planning another action.
+screenshot before planning another action. If completed_steps contains a dispatched click with
+verified=false and a message saying "Changed pixels: 0.0%", treat that click as having no detected
+visual effect: inspect the current screenshot again, do not assume the click succeeded, and do not
+repeat the recorded planner-image point. Decide whether the intended selection is already visible;
+otherwise choose a different clearly visible target. The runner permits only one such recovery.
 
 A non-terminal response MUST use this exact structure (no wrapper keys):
 {"done": false, "success": true, "reason": "Why this one action is next.", "step": {

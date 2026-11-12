@@ -6,9 +6,21 @@ from qwencoder_cua.models.geometry import Point
 from qwencoder_cua.agent import (
     OllamaTaskPlanner, TaskDecision, TaskPlan, TaskPolicy, TaskRunner, TaskStep,
 )
+from qwencoder_cua.drawing import (
+    CanvasRegion, ResolvedScene, canvas_from_target, resolve_scene,
+)
+from qwencoder_cua.models.scene import (
+    DrawingStyle, NormalizedPoint, NormalizedRect, SceneObject, ScenePlan,
+)
+from qwencoder_cua.models.target import UITarget
+from qwencoder_cua.perception import AccessibilityTargetDetector, TargetDetector, TargetRegistry
 
 __version__ = "0.5.8"
 __all__ = [
     "Computer", "ElementSelector", "ActionOutcome", "Point", "OllamaTaskPlanner",
-    "TaskDecision", "TaskPlan", "TaskPolicy", "TaskRunner", "TaskStep", "__version__",
+    "TaskDecision", "TaskPlan", "TaskPolicy", "TaskRunner", "TaskStep",
+    "UITarget", "TargetRegistry", "TargetDetector", "AccessibilityTargetDetector",
+    "CanvasRegion", "ResolvedScene", "canvas_from_target", "resolve_scene",
+    "DrawingStyle", "NormalizedPoint", "NormalizedRect", "SceneObject", "ScenePlan",
+    "__version__",
 ]

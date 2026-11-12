@@ -114,9 +114,9 @@ class TaskRunner:
                     # without blindly repeating the same click.
                     failed = step_result.steps[-1]
                     attempted = (
-                        f"planner-image point ({decision.step.x}, {decision.step.y})"
+                        f"planner-image point: ({decision.step.x}, {decision.step.y})"
                         if decision.step.action == "click"
-                        else f"named target {decision.step.target_id!r}"
+                        else f"named target: {decision.step.target_id!r}"
                     )
                     failed = failed.model_copy(update={
                         "message": (

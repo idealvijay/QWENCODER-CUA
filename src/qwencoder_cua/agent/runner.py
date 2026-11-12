@@ -93,7 +93,9 @@ class TaskRunner:
                 return self._run_result(run_id, goal, False, "timed_out", history,
                                         "Task exceeded runtime limit.", started)
             step_policy = replace(self.policy, max_steps=1, max_runtime_seconds=max(0.1, remaining))
-            step_runner = TaskRunner(self.computer, step_policy)
+            step_runner = TaskRunner(
+                self.computer, step_policy, target_detector=self.target_detector
+            )
             step_plan = TaskPlan(goal=goal, steps=[decision.step])
             wrapped_approval = None
             if approve is not None:

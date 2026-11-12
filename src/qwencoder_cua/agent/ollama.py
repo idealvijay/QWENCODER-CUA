@@ -281,10 +281,10 @@ class OllamaTaskPlanner:
                             done=True,
                             success=False,
                             reason=(
-                                "The model could not reconcile the foreground-window metadata with "
-                                "the screenshot after one correction. No desktop action was "
-                                "dispatched. Verify that Paint is visible on the captured desktop "
-                                "and rerun the task. Model response: "
+                                "The planner could not resolve the screenshot/window mismatch between "
+                                "foreground-window metadata and the captured image after one "
+                                "correction. No desktop action was dispatched. Verify that Paint "
+                                "is visible on the captured desktop and rerun the task. Model response: "
                                 f"{decision.reason}"
                             ),
                             step=None,

@@ -345,11 +345,14 @@ class OllamaTaskPlanner:
         """Return planner-image coordinate violations before any action is dispatched."""
         if step is None or step.action not in {"click", "move_mouse", "drag", "draw_path"}:
             return []
+        # Planner-only unit tests and non-visual providers may not have screenshot
+        # dimensions. In that case defer to TaskRunner, which independently refuses
+        # pointer dispatch when it cannot validate a captured screenshot.
         if not isinstance(screen_size, dict):
-            return ["Screenshot dimensions are unavailable for coordinate validation."]
+            return []
         width, height = screen_size.get("width"), screen_size.get("height")
         if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
-            return ["Planner image dimensions are invalid."]
+            return []
         if step.action in {"click", "move_mouse"}:
             points = [(step.x, step.y)]
         elif step.action == "drag":

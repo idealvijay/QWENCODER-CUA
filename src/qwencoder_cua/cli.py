@@ -9,6 +9,7 @@ from rich import print
 from qwencoder_cua import (
     Computer, OllamaTaskPlanner, TaskPlan, TaskPolicy, TaskRunner, __version__,
 )
+from qwencoder_cua.core.exceptions import CUAError
 
 app = typer.Typer(help="QWENCODER CUA local desktop automation")
 
@@ -86,10 +87,14 @@ def run_goal(
 ):
     """Run an observe/plan/act/verify loop using the local Ollama server."""
     planner = OllamaTaskPlanner(model=model)
-    with Computer() as computer:
-        result = TaskRunner(computer, TaskPolicy(max_steps=max_steps)).run(
-            goal, planner, approve=_approval_prompt
-        )
+    try:
+        with Computer() as computer:
+            result = TaskRunner(computer, TaskPolicy(max_steps=max_steps)).run(
+                goal, planner, approve=_approval_prompt
+            )
+    except CUAError as exc:
+        print(f"[red]QWENCODER error:[/red] {exc}")
+        raise typer.Exit(code=1) from exc
     print(json.dumps(result.model_dump(mode="json"), indent=2))
     if not result.success:
         raise typer.Exit(code=1)

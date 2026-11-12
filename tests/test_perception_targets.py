@@ -136,3 +136,22 @@ def test_combined_target_detector_merges_visual_and_accessibility_targets():
     assert registry.resolve(
         "paint.color.red", observation_id="obs-1"
     ).source == "vision"
+
+
+
+def test_target_detector_runs_configured_visual_detectors():
+    observation = Observation(observation_id="obs-visual", platform="windows")
+    target = UITarget(
+        target_id="paint.color.red",
+        label="Red swatch",
+        kind="color",
+        bounds=Rect(x=12, y=20, width=16, height=16),
+        observation_id="obs-visual",
+        source="vision",
+        confidence=0.9,
+    )
+    detector = TargetDetector(
+        visual_detectors=[lambda current: [target] if current.observation_id == "obs-visual" else []]
+    )
+    registry = detector.detect(observation)
+    assert registry.resolve("paint.color.red", observation_id="obs-visual") == target

@@ -15,7 +15,7 @@ from qwencoder_cua.models.scene import (
 from qwencoder_cua.models.target import UITarget
 from qwencoder_cua.perception import AccessibilityTargetDetector, TargetDetector, TargetRegistry
 
-__version__ = "0.5.8"
+__version__ = "0.6.0"
 __all__ = [
     "Computer", "ElementSelector", "ActionOutcome", "Point", "OllamaTaskPlanner",
     "TaskDecision", "TaskPlan", "TaskPolicy", "TaskRunner", "TaskStep",

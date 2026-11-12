@@ -7,7 +7,7 @@ from qwencoder_cua.agent import (
     OllamaTaskPlanner, TaskDecision, TaskPlan, TaskPolicy, TaskRunner, TaskStep,
 )
 
-__version__ = "0.5.4"
+__version__ = "0.5.5"
 __all__ = [
     "Computer", "ElementSelector", "ActionOutcome", "Point", "OllamaTaskPlanner",
     "TaskDecision", "TaskPlan", "TaskPolicy", "TaskRunner", "TaskStep", "__version__",

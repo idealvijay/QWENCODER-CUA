@@ -52,8 +52,15 @@ Allowed actions:
 
 Pointer coordinates are measured in the resized image shown to you (the
 `screen_size` field), not the full desktop. The runner automatically maps them to desktop
-pixels using `desktop_size`. Keep every point within `screen_size` and inside the drawable
-canvas rectangle; never target the toolbar, ribbon, status bar or title bar as a drawing point.
+pixels using `desktop_size`. Coordinates returned in actions MUST use `screen_size`
+pixels, never `desktop_size` pixels. Before returning a coordinate action, check every
+coordinate numerically: `0 <= x < screen_size.width` and `0 <= y < screen_size.height`.
+For drag, check both endpoints; for draw_path, check every waypoint. Never return a coordinate
+outside those limits, even if the full desktop resolution is larger. If you cannot locate a
+safe point inside the image, return done=true, success=false and explain why; do not guess.
+
+Keep every point within `screen_size` and inside the drawable canvas rectangle; never target
+the toolbar, ribbon, status bar or title bar as a drawing point.
 
 For drawing tasks, distinguish the canvas from surrounding application chrome. A blank
 white/transparent canvas is normal and is not evidence that a tool or colour is missing.
@@ -234,7 +241,40 @@ class OllamaTaskPlanner:
                         decision_data["step"] = None
 
                 try:
-                    return TaskDecision.model_validate(decision_data)
+                    decision = TaskDecision.model_validate(decision_data)
+                    coordinate_errors = self._coordinate_errors(
+                        decision.step, context.get("screen_size")
+                    )
+                    if coordinate_errors:
+                        detail = " ".join(coordinate_errors)
+                        if attempt == 0:
+                            messages = [
+                                *messages,
+                                {"role": "assistant", "content": content},
+                                {
+                                    "role": "user",
+                                    "content": (
+                                        "Your last action used coordinates outside the image. "
+                                        "Do not repeat them. Return a corrected decision using only "
+                                        "coordinates inside the exact planner image dimensions below. "
+                                        "Coordinates are planner-image pixels, not desktop pixels. "
+                                        f"Planner image dimensions: {context.get('screen_size')}. "
+                                        "Required bounds: 0 <= x < width and 0 <= y < height for "
+                                        "every click/move point, both drag endpoints, and every "
+                                        "draw_path waypoint. Re-examine the attached screenshot and "
+                                        "choose a point inside the Paint control/canvas. Do not "
+                                        "clamp the previous coordinate or invent a location. If no "
+                                        "safe point can be identified, return done=true, success=false.\n"
+                                        f"Coordinate validation: {detail}"
+                                    ),
+                                },
+                            ]
+                            continue
+                        raise CUAError(
+                            "Ollama returned out-of-range pointer coordinates after one correction "
+                            f"attempt. Planner image: {context.get('screen_size')}. {detail}"
+                        )
+                    return decision
                 except ValidationError as exc:
                     if attempt == 0:
                         validation_detail = str(exc)[:1800]
@@ -299,6 +339,33 @@ class OllamaTaskPlanner:
             raise CUAError(f"Could not reach local Ollama at {self.endpoint}: {exc}") from exc
         except (json.JSONDecodeError, KeyError, TypeError) as exc:
             raise CUAError(f"Ollama returned an invalid task decision: {exc}") from exc
+
+    @staticmethod
+    def _coordinate_errors(step: TaskStep | None, screen_size: dict | None) -> list[str]:
+        """Return planner-image coordinate violations before any action is dispatched."""
+        if step is None or step.action not in {"click", "move_mouse", "drag", "draw_path"}:
+            return []
+        # Planner-only unit tests and non-visual providers may not have screenshot
+        # dimensions. In that case defer to TaskRunner, which independently refuses
+        # pointer dispatch when it cannot validate a captured screenshot.
+        if not isinstance(screen_size, dict):
+            return []
+        width, height = screen_size.get("width"), screen_size.get("height")
+        if not isinstance(width, int) or not isinstance(height, int) or width <= 0 or height <= 0:
+            return []
+        if step.action in {"click", "move_mouse"}:
+            points = [(step.x, step.y)]
+        elif step.action == "drag":
+            points = [(step.start_x, step.start_y), (step.end_x, step.end_y)]
+        else:
+            points = [(point.x, point.y) for point in (step.points or [])]
+        errors = []
+        for index, (x, y) in enumerate(points):
+            if x is None or y is None or not (0 <= x < width and 0 <= y < height):
+                errors.append(
+                    f"Point {index + 1} ({x}, {y}) is outside 0<=x<{width}, 0<=y<{height}."
+                )
+        return errors
 
     @staticmethod
     def _read_observation_image(observation: Observation) -> list[str]:

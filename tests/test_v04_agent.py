@@ -137,3 +137,97 @@ def test_unapproved_sensitive_step_is_not_dispatched_by_iterative_runner():
         result = TaskRunner(computer).run("send a post", Planner())
     assert result.status == "approval_required"
     assert driver.typed == []
+
+
+
+def test_closed_loop_replans_once_after_paint_click_has_no_visual_effect():
+    class ReplanningDriver(FakeDriver):
+        def __init__(self):
+            super().__init__()
+            self.visible_state = False
+
+        def screenshot(self, output=None):
+            image = Image.new("RGB", (100, 80), "black")
+            if self.visible_state:
+                image.paste("white", (5, 5, 25, 25))
+            if output:
+                image.save(output)
+            return image
+
+        def click(self, x, y, button="left"):
+            super().click(x, y, button)
+            if (x, y) == (20, 20):
+                self.visible_state = True
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                assert not history
+                return TaskDecision(
+                    step=TaskStep(
+                        action="click", x=10, y=10,
+                        expected={"screen_changed": {"min_fraction": 0.001}},
+                    )
+                )
+            if self.calls == 2:
+                assert len(history) == 1
+                assert history[0].dispatched and not history[0].verified
+                assert "Changed pixels: 0.0%" in history[0].message
+                assert "planner-image point: (10, 10)" in history[0].message
+                return TaskDecision(
+                    step=TaskStep(
+                        action="click", x=20, y=20,
+                        expected={"screen_changed": {"min_fraction": 0.001}},
+                    )
+                )
+            assert len(history) == 2 and history[-1].verified
+            return TaskDecision(done=True, success=True, reason="The Paint control is selected.")
+
+    driver = ReplanningDriver()
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(computer, TaskPolicy(max_steps=4)).run(
+            "Draw a red circle in Paint.", planner
+        )
+
+    assert result.success
+    assert result.status == "completed"
+    assert planner.calls == 3
+    assert driver.clicked == [(10, 10, "left"), (20, 20, "left")]
+    assert len(result.steps) == 2
+    assert not result.steps[0].verified
+    assert result.steps[1].verified
+
+
+def test_closed_loop_limits_no_change_paint_click_recovery_to_one_retry():
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            return TaskDecision(
+                step=TaskStep(
+                    action="click",
+                    x=10 + self.calls,
+                    y=10,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                )
+            )
+
+    driver = FakeDriver()
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(computer, TaskPolicy(max_steps=4)).run(
+            "Draw a red circle in Paint.", planner
+        )
+
+    assert not result.success
+    assert result.status == "failed"
+    assert planner.calls == 2
+    assert len(result.steps) == 2
+    assert all(item.dispatched and not item.verified for item in result.steps)

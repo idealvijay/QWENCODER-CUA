@@ -5,6 +5,7 @@ from qwencoder_cua.core.target_errors import StaleTargetError, TargetNotFoundErr
 from qwencoder_cua.models.element import UIElement
 from qwencoder_cua.models.geometry import Rect
 from qwencoder_cua.models.observation import Observation
+from qwencoder_cua.models.target import UITarget
 from qwencoder_cua.models.window import WindowInfo
 from qwencoder_cua.perception.accessibility_detector import AccessibilityTargetDetector
 from qwencoder_cua.perception.color_detector import ColorSwatchDetector

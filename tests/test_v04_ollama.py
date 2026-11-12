@@ -597,3 +597,10 @@ def test_planner_stops_after_repeated_manual_ui_handoff(monkeypatch):
     assert not result.success
     assert len(calls) == 2
     assert "no desktop action was dispatched" in result.reason.lower()
+
+
+
+def test_prompt_treats_normal_ui_setup_as_agent_work():
+    normalized = " ".join(SYSTEM_PROMPT.split()).lower()
+    assert "normal ui setup is part of the task, not a blocker" in normalized
+    assert "never return a terminal failure saying the user must select" in normalized

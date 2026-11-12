@@ -288,6 +288,6 @@ def test_planner_normalizes_postcondition_alias_when_step_is_otherwise_valid(mon
 
 def test_prompt_requires_exact_taskstep_fields():
     normalized = " ".join(SYSTEM_PROMPT.split())
-    assert 'required "action" field' in normalized
-    assert 'required "expected" postcondition object' in normalized
+    assert "action field is mandatory" in normalized
+    assert "expected postcondition object" in normalized
     assert 'never use "postcondition"' in normalized

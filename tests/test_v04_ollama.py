@@ -530,7 +530,7 @@ def test_planner_retries_manual_paint_ui_handoff_when_paint_is_active(monkeypatc
     assert result.step.action == "click"
     assert len(requests) == 2
     correction = requests[1]["messages"][-1]["content"].lower()
-    assert "target application is already active" in correction
+    assert "os foreground-window api reports" in correction
     assert "do not tell the user" in correction
 
 
@@ -604,3 +604,126 @@ def test_prompt_treats_normal_ui_setup_as_agent_work():
     normalized = " ".join(SYSTEM_PROMPT.split()).lower()
     assert "normal ui setup is part of the task, not a blocker" in normalized
     assert "never return a terminal failure saying the user must select" in normalized
+
+
+
+def test_planner_retries_when_model_contradicts_active_paint_window(monkeypatch):
+    contradiction = {
+        "done": True,
+        "success": False,
+        "reason": (
+            "The current active window is Paint, but the target application is not the "
+            "Paint app and a different application is shown on the screen. The user must "
+            "switch to the Paint app to draw a circle."
+        ),
+        "step": None,
+    }
+    actionable = {
+        "done": False,
+        "success": True,
+        "reason": "Paint is visible; select the red swatch.",
+        "step": {
+            "action": "click",
+            "x": 430,
+            "y": 88,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(contradiction)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(actionable)}}),
+    ]
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(json.loads(request.data.decode("utf-8")))
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        active_window=WindowInfo(
+            id="1", title="Untitled - Paint", process_name="mspaint.exe", is_active=True
+        ),
+    )
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert not result.done
+    assert result.step is not None and result.step.action == "click"
+    assert len(requests) == 2
+    correction = requests[1]["messages"][-1]["content"]
+    assert "OS foreground-window API reports" in correction
+    assert "screenshot genuinely shows a different app" in correction
+
+
+def test_planner_does_not_retry_app_mismatch_when_other_app_is_foreground(monkeypatch):
+    contradiction = {
+        "done": True,
+        "success": False,
+        "reason": (
+            "The current active window is not Paint. A different application is shown. "
+            "The user must switch to the Paint app."
+        ),
+        "step": None,
+    }
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        return FakeOllamaResponse({"message": {"content": json.dumps(contradiction)}})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        active_window=WindowInfo(
+            id="2", title="Untitled - Notepad", process_name="notepad.exe", is_active=True
+        ),
+    )
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.done and not result.success
+    assert len(calls) == 1
+
+
+def test_planner_reports_unresolved_paint_screenshot_mismatch_safely(monkeypatch):
+    contradiction = {
+        "done": True,
+        "success": False,
+        "reason": (
+            "The current active window is Paint, but a different application is shown. "
+            "The user must switch to Paint."
+        ),
+        "step": None,
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(contradiction)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(contradiction)}}),
+    ]
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        active_window=WindowInfo(
+            id="1", title="Untitled - Paint", process_name="mspaint.exe", is_active=True
+        ),
+    )
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.done and not result.success
+    assert len(calls) == 2
+    assert "screenshot/window mismatch" in result.reason.lower()
+    assert "no desktop action was dispatched" in result.reason.lower()

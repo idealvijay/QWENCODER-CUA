@@ -273,7 +273,8 @@ def test_drawing_prompt_trusts_user_blank_canvas_statement():
     normalized = " ".join(SYSTEM_PROMPT.split())
     assert "user's statement that the canvas is blank is reliable" in normalized
     assert "specific visible marks inside the canvas itself" in normalized
-    assert "built-in ellipse shape with no fill and a red outline" in normalized
+    assert "strongly prefer the built-in Ellipse/Oval shape" in normalized
+    assert "then use one drag for the circle's bounding box" in normalized
 
 
 def test_planner_context_matches_resized_image_dimensions(monkeypatch, tmp_path):

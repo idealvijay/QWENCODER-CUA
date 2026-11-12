@@ -11,6 +11,7 @@ from qwencoder_cua.agent.ollama import OllamaTaskPlanner, SYSTEM_PROMPT
 from qwencoder_cua.agent.plan import TaskStep
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.models.observation import Observation, ScreenshotRef
+from qwencoder_cua.models.window import WindowInfo
 
 
 def test_planner_uses_local_ollama_defaults(monkeypatch):
@@ -476,3 +477,123 @@ def test_prompt_has_strict_planner_image_coordinate_bounds():
     assert "0 <= x < screen_size.width" in normalized
     assert "Coordinates returned in actions MUST use" in normalized
     assert "do not guess" in normalized
+
+
+
+def test_planner_retries_manual_paint_ui_handoff_when_paint_is_active(monkeypatch):
+    manual_handoff = {
+        "done": True,
+        "success": False,
+        "reason": (
+            "The user must select the red color from the color palette, then select "
+            "the circle shape from the shape menu, and finally click on the canvas."
+        ),
+        "step": None,
+    }
+    actionable = {
+        "done": False,
+        "success": True,
+        "reason": "Select the visible red color swatch.",
+        "step": {
+            "action": "click",
+            "x": 420,
+            "y": 90,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(manual_handoff)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(actionable)}}),
+    ]
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(json.loads(request.data.decode("utf-8")))
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        active_window=WindowInfo(
+            id="1", title="Untitled - Paint", process_name="mspaint.exe", is_active=True
+        ),
+    )
+
+    result = planner.plan_next(
+        "Draw a smooth red circle near the centre of the blank Paint canvas.", observation, []
+    )
+
+    assert not result.done
+    assert result.step is not None
+    assert result.step.action == "click"
+    assert len(requests) == 2
+    correction = requests[1]["messages"][-1]["content"].lower()
+    assert "target application is already active" in correction
+    assert "do not tell the user" in correction
+
+
+def test_planner_does_not_override_manual_handoff_when_paint_is_not_active(monkeypatch):
+    manual_handoff = {
+        "done": True,
+        "success": False,
+        "reason": "The user must select the red color from the palette.",
+        "step": None,
+    }
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        return FakeOllamaResponse({"message": {"content": json.dumps(manual_handoff)}})
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        active_window=WindowInfo(id="2", title="Untitled - Notepad", is_active=True),
+    )
+
+    result = planner.plan_next(
+        "Draw a smooth red circle in Paint.", observation, []
+    )
+
+    assert result.done
+    assert not result.success
+    assert len(calls) == 1
+
+
+def test_planner_stops_after_repeated_manual_ui_handoff(monkeypatch):
+    manual_handoff = {
+        "done": True,
+        "success": False,
+        "reason": "The user must select the red color from the palette.",
+        "step": None,
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": json.dumps(manual_handoff)}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(manual_handoff)}}),
+    ]
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request)
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs",
+        platform="windows",
+        active_window=WindowInfo(
+            id="1", title="Untitled - Paint", process_name="mspaint.exe", is_active=True
+        ),
+    )
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.done
+    assert not result.success
+    assert len(calls) == 2
+    assert "no desktop action was dispatched" in result.reason.lower()

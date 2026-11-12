@@ -410,8 +410,7 @@ class OllamaTaskPlanner:
                                     "For draw_path, points MUST be JSON objects with x and y fields, "
                                     "never a flat list such as [600,300,620,320] or nested arrays. "
                                     "A smooth circle should use 12-24 evenly spaced points and never "
-                                    "more than 64 points. Rewrite every coordinate pair as one "
-                                    "{\\\"x\\\": number, \\\"y\\\": number} object.\n"
+                                    "more than 64 points. Rewrite every coordinate pair as a separate object with x and y fields.\\n"
                                     f"Validation error: {validation_detail}\n"
                                     f"Your previous invalid response was: {previous_response}"
                                 ),

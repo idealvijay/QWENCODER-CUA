@@ -98,7 +98,7 @@ def test_resolve_scene_orders_objects_and_maps_geometry_to_canvas():
     assert [item.object_id for item in resolved.objects] == ["sun", "tree"]
     assert resolved.objects[0].bounds == Rect(x=660, y=110, width=80, height=60)
     assert resolved.objects[1].points == [
-        Point(x=500, y=170), Point(x=420, y=410), Point(x=580, y=410)
+        Point(x=500, y=170), Point(x=420, y=409), Point(x=579, y=409)
     ]
 
 

@@ -330,11 +330,10 @@ def test_planner_preserves_supported_semantic_checks_alongside_screen_change(mon
     decision = {
         "done": False,
         "success": True,
-        "reason": "Click a visible control.",
+        "reason": "Activate a semantic Paint control.",
         "step": {
-            "action": "click",
-            "x": 700,
-            "y": 300,
+            "action": "click_element",
+            "selector": {"role": "button", "name": "Paint control"},
             "expected": {
                 "screen_changed": {"min_fraction": 0.001},
                 "active_window_title_contains": "Paint",
@@ -350,7 +349,7 @@ def test_planner_preserves_supported_semantic_checks_alongside_screen_change(mon
     planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
     observation = Observation(observation_id="obs", platform="windows")
 
-    result = planner.plan_next("Click a Paint control.", observation, [])
+    result = planner.plan_next("Activate a semantic Paint control.", observation, [])
 
     assert result.step.expected == {
         "screen_changed": {"min_fraction": 0.001},

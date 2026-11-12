@@ -13,13 +13,15 @@ from qwencoder_cua.models.scene import (
     DrawingStyle, NormalizedPoint, NormalizedRect, SceneObject, ScenePlan,
 )
 from qwencoder_cua.models.target import UITarget
-from qwencoder_cua.perception import AccessibilityTargetDetector, TargetDetector, TargetRegistry
+from qwencoder_cua.perception import (
+    AccessibilityTargetDetector, ColorSwatchDetector, TargetDetector, TargetRegistry,
+)
 
 __version__ = "0.6.0"
 __all__ = [
     "Computer", "ElementSelector", "ActionOutcome", "Point", "OllamaTaskPlanner",
     "TaskDecision", "TaskPlan", "TaskPolicy", "TaskRunner", "TaskStep",
-    "UITarget", "TargetRegistry", "TargetDetector", "AccessibilityTargetDetector",
+    "UITarget", "TargetRegistry", "TargetDetector", "AccessibilityTargetDetector", "ColorSwatchDetector",
     "CanvasRegion", "ResolvedScene", "canvas_from_target", "resolve_scene",
     "DrawingStyle", "NormalizedPoint", "NormalizedRect", "SceneObject", "ScenePlan",
     "__version__",

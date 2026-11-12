@@ -283,3 +283,57 @@ def test_task_step_requires_non_empty_target_id_for_named_click():
             target_id=" ",
             expected={"screen_changed": {"min_fraction": 0.001}},
         )
+
+
+
+def test_iterative_runner_reobserves_after_ineffective_named_paint_target_click():
+    class TrackingTargetDetector:
+        def __init__(self):
+            self.observation_ids = []
+
+        def detect(self, observation):
+            self.observation_ids.append(observation.observation_id)
+            return TargetRegistry(observation.observation_id, [
+                UITarget(
+                    target_id="paint.color.red",
+                    label="Red",
+                    kind="color",
+                    bounds=Rect(x=10, y=10, width=12, height=12),
+                    observation_id=observation.observation_id,
+                    source="accessibility",
+                )
+            ])
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                return TaskDecision(step=TaskStep(
+                    action="click_target",
+                    target_id="paint.color.red",
+                    timeout_seconds=0.05,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+            assert len(history) == 1
+            assert "Last attempted named target 'paint.color.red'" in history[0].message
+            return TaskDecision(
+                done=True,
+                success=False,
+                reason="The refreshed screen did not confirm the palette selection.",
+            )
+
+    driver = FakeDriver()
+    detector = TrackingTargetDetector()
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(
+            computer, TaskPolicy(max_steps=4), target_detector=detector
+        ).run("Draw a red circle in Paint.", planner)
+
+    assert not result.success
+    assert planner.calls == 2
+    assert len(driver.clicked) == 1
+    assert detector.observation_ids == [result.steps[0].before_observation_id]

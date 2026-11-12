@@ -1,6 +1,6 @@
 # QWENCODER CUA Driver
 
-**Version 0.5.1** — local-first Python desktop automation for Windows and Linux.
+**Version 0.5.4** — local-first Python desktop automation for Windows and Linux.
 Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
 ## v0.5 highlights

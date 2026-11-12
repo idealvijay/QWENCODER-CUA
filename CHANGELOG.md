@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.5.4
+- Detect terminal vision-model responses that incorrectly ask the user to perform normal Paint drawing setup while Paint is already active.
+- Re-prompt the model once to produce a concrete allowed UI action; preserve manual foreground-window hand-offs and stop safely if the model repeats the hand-off.
+- Strengthen planner guidance that colour/tool/shape selection is part of the agent's work.
+
 ## 0.5.3
 - Validate model-generated click, move, drag and draw-path coordinates against the resized vision image before accepting a planner decision.
 - When coordinates are outside image bounds, return dimensions and offending points to the model for one bounded replan.

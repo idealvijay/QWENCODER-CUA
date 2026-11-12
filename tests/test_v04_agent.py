@@ -318,7 +318,7 @@ def test_iterative_runner_reobserves_after_ineffective_named_paint_target_click(
                     expected={"screen_changed": {"min_fraction": 0.001}},
                 ))
             assert len(history) == 1
-            assert "Last attempted named target 'paint.color.red'" in history[0].message
+            assert "Last attempted named target: 'paint.color.red'" in history[0].message
             return TaskDecision(
                 done=True,
                 success=False,

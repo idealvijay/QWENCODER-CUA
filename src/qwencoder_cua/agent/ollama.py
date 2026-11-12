@@ -179,8 +179,14 @@ class OllamaTaskPlanner:
     Default model is qwen2.5-coder:7b. The model returns one structured step at a time.
     """
 
-    def __init__(self, endpoint: str | None = None, model: str | None = None,
-                 timeout_seconds: float = 45.0, num_ctx: int | None = None):
+    def __init__(
+        self,
+        endpoint: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float = 45.0,
+        num_ctx: int | None = None,
+        target_detector: TargetDetector | None = None,
+    ):
         self.endpoint = (endpoint or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
         if not self.endpoint.endswith("/api/chat"):
             self.endpoint = self.endpoint + "/chat" if self.endpoint.endswith("/api") else self.endpoint + "/api/chat"
@@ -201,6 +207,7 @@ class OllamaTaskPlanner:
         if not 2048 <= self.num_ctx <= 131072:
             raise ValueError("num_ctx must be between 2048 and 131072 tokens.")
         self.timeout_seconds = timeout_seconds
+        self.target_detector = target_detector or TargetDetector()
 
     def plan_next(self, goal: str, observation: Observation, history: list[Any]) -> TaskDecision:
         elements = [
@@ -212,27 +219,32 @@ class OllamaTaskPlanner:
             }
             for item in observation.elements[:160]
         ]
+        desktop_size = None
+        screen_size = None
+        source_size = None
+        output_size = None
+        if observation.screenshot and observation.screenshot.width and observation.screenshot.height:
+            source_size = (
+                observation.screenshot.width,
+                observation.screenshot.height,
+            )
+            output_size = planner_image_dimensions(*source_size)
+            desktop_size = {"width": source_size[0], "height": source_size[1]}
+            screen_size = {"width": output_size[0], "height": output_size[1]}
+        target_registry = self.target_detector.detect(observation)
         context = {
             "goal": goal,
             "platform": observation.platform,
             "session_type": observation.session_type,
             "active_window": observation.active_window.model_dump() if observation.active_window else None,
             "accessibility_available": observation.accessibility_available,
-            "desktop_size": (
-                {"width": observation.screenshot.width, "height": observation.screenshot.height}
-                if observation.screenshot else None
-            ),
-            "screen_size": (
-                {"width": planner_image_dimensions(
-                    observation.screenshot.width, observation.screenshot.height
-                )[0], "height": planner_image_dimensions(
-                    observation.screenshot.width, observation.screenshot.height
-                )[1]}
-                if observation.screenshot else None
-            ),
+            "desktop_size": desktop_size,
+            "screen_size": screen_size,
             "accessible_elements": elements,
-            "available_targets": TargetDetector().detect(observation).prompt_context(
-                observation_id=observation.observation_id
+            "available_targets": target_registry.prompt_context(
+                observation_id=observation.observation_id,
+                source_size=source_size,
+                output_size=output_size,
             )[:80],
             "completed_steps": [item.model_dump() for item in history[-12:]],
         }

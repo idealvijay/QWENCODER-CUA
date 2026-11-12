@@ -951,3 +951,65 @@ def test_planner_receives_named_targets_and_can_choose_one(monkeypatch):
     assert context["available_targets"][0]["target_id"] == "paint.shape.ellipse"
     assert context["available_targets"][0]["center"] == {"x": 520, "y": 94}
     assert "click_target" in SYSTEM_PROMPT
+
+
+
+def test_planner_scales_named_target_bounds_to_resized_image(monkeypatch):
+    decision = {
+        "done": False,
+        "success": True,
+        "reason": "Click the detected target.",
+        "step": {
+            "action": "click_target",
+            "target_id": "paint.shape.ellipse",
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return FakeOllamaResponse({
+            "message": {"content": json.dumps(decision)}
+        })
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(
+        observation_id="obs-scale",
+        platform="windows",
+        active_window=WindowInfo(
+            id="1", title="Untitled - Paint", process_name="mspaint.exe", is_active=True
+        ),
+        screenshot=ScreenshotRef(path=None, width=2000, height=1000),
+        elements=[
+            UIElement(
+                id="ellipse",
+                role="button",
+                name="Ellipse",
+                bounds=Rect(x=1000, y=500, width=200, height=100),
+            )
+        ],
+    )
+
+    planner.plan_next("Select ellipse.", observation, [])
+
+    context = json.loads(captured["payload"]["messages"][1]["content"])
+    target = context["available_targets"][0]
+    assert context["screen_size"] == {"width": 1280, "height": 640}
+    assert target["coordinate_space"] == "planner_image_pixels"
+    assert target["bounds"] == {"x": 640, "y": 320, "width": 128, "height": 64}
+    assert target["center"] == {"x": 704, "y": 352}
+
+
+def test_planner_accepts_injected_target_detector():
+    from qwencoder_cua.perception.target_detector import TargetDetector
+
+    def custom_visual_detector(observation):
+        return []
+
+    detector = TargetDetector(visual_detectors=[custom_visual_detector])
+    planner = OllamaTaskPlanner(
+        model="minicpm-v4.5:q4_0", target_detector=detector
+    )
+    assert planner.target_detector is detector

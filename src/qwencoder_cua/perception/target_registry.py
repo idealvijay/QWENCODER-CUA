@@ -74,23 +74,52 @@ class TargetRegistry:
             and target.enabled
         ]
 
-    def prompt_context(self, *, observation_id: str) -> list[dict]:
-        """Return compact, JSON-ready target details for a vision planner prompt."""
+    def prompt_context(
+        self,
+        *,
+        observation_id: str,
+        source_size: tuple[int, int] | None = None,
+        output_size: tuple[int, int] | None = None,
+    ) -> list[dict]:
+        """Return targets in the coordinate space of the image sent to the planner."""
         self._check_observation(observation_id)
-        return [
-            {
+        scale_x = scale_y = 1.0
+        coordinate_space = "desktop_capture_pixels"
+        if source_size is not None and output_size is not None:
+            source_width, source_height = source_size
+            output_width, output_height = output_size
+            if min(source_width, source_height, output_width, output_height) <= 0:
+                raise ValueError("source_size and output_size dimensions must be positive")
+            scale_x = output_width / source_width
+            scale_y = output_height / source_height
+            coordinate_space = "planner_image_pixels"
+
+        result = []
+        for target in self._targets.values():
+            if not target.visible or not target.enabled:
+                continue
+            left = round(target.bounds.x * scale_x)
+            top = round(target.bounds.y * scale_y)
+            width = max(1, round(target.bounds.width * scale_x))
+            height = max(1, round(target.bounds.height * scale_y))
+            bounds = {
+                "x": left, "y": top, "width": width, "height": height,
+            }
+            result.append({
                 "target_id": target.target_id,
                 "label": target.label,
                 "kind": target.kind,
-                "bounds": target.bounds.model_dump(),
-                "center": target.center.model_dump(),
+                "bounds": bounds,
+                "center": {
+                    "x": left + width // 2,
+                    "y": top + height // 2,
+                },
+                "coordinate_space": coordinate_space,
                 "confidence": target.confidence,
                 "source": target.source,
                 "enabled": target.enabled,
-            }
-            for target in self._targets.values()
-            if target.visible and target.enabled
-        ]
+            })
+        return result
 
     def all(self, *, observation_id: str) -> list[UITarget]:
         self._check_observation(observation_id)

@@ -713,3 +713,137 @@ def test_fallback_red_stroke_verifier_checks_new_red_pixels_only(tmp_path):
     assert "new red pixels" in red_message
     assert not black_ok
     assert "No new red pixels" in black_message
+
+
+
+def test_paint_red_circle_path_is_validated_even_without_ellipse_fallback():
+    import math
+
+    driver = FreehandFallbackPaintDriver()
+
+    def valid_circle():
+        points = [
+            Point(
+                x=50 + round(20 * math.cos(index * math.tau / 16)),
+                y=40 + round(20 * math.sin(index * math.tau / 16)),
+            )
+            for index in range(16)
+        ]
+        points.append(points[0])
+        return points
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                # No ellipse-selection attempt preceded this path. Circle quality
+                # validation must still protect a direct model-generated draw_path.
+                vertical_line = [
+                    Point(x=50, y=y) for y in range(15, 75, 5)
+                ]
+                return TaskDecision(step=TaskStep(
+                    action="draw_path",
+                    points=vertical_line,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+            if self.calls == 2:
+                assert len(history) == 1
+                assert not history[0].dispatched
+                assert "PAINT CIRCLE PATH REJECTED" in history[0].message
+                assert "aspect ratio" in history[0].message or "each axis must span" in history[0].message
+                return TaskDecision(step=TaskStep(
+                    action="draw_path",
+                    points=valid_circle(),
+                    duration_seconds=0.5,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+            assert len(history) == 2
+            assert not history[0].dispatched
+            assert history[1].action == "draw_path"
+            assert history[1].dispatched and history[1].verified
+            assert "new red pixels" in history[1].message
+            return TaskDecision(
+                done=True, success=True,
+                reason="A red circle is visible on the Paint canvas.",
+            )
+
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(computer, TaskPolicy(max_steps=5)).run(
+            "Draw a red circle near the centre of the canvas and verify it.",
+            planner,
+        )
+
+    assert result.success
+    assert result.status == "completed"
+    assert planner.calls == 3
+    assert len(result.steps) == 2
+    assert not result.steps[0].dispatched
+    assert result.steps[1].dispatched and result.steps[1].verified
+    assert len(driver.stroke_points) >= 16
+
+
+def test_paint_red_circle_path_rejects_black_stroke_and_requests_correction():
+    import math
+
+    class BlackStrokeDriver(FreehandFallbackPaintDriver):
+        def screenshot(self, output=None):
+            image = Image.new("RGB", (100, 80), "white")
+            if len(self.stroke_points) >= 2:
+                ImageDraw.Draw(image).line(
+                    self.stroke_points, fill=(0, 0, 0), width=2
+                )
+            if output:
+                image.save(output)
+            return image
+
+    driver = BlackStrokeDriver()
+    points = [
+        Point(
+            x=50 + round(20 * math.cos(index * math.tau / 16)),
+            y=40 + round(20 * math.sin(index * math.tau / 16)),
+        )
+        for index in range(16)
+    ]
+    points.append(points[0])
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                return TaskDecision(step=TaskStep(
+                    action="draw_path",
+                    points=points,
+                    duration_seconds=0.5,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+            assert len(history) == 1
+            assert history[0].dispatched and not history[0].verified
+            assert "No new red pixels" in history[0].message
+            assert "RED STROKE CORRECTION REQUIRED" in history[0].message
+            assert "Undo the last wrong-colour stroke" in history[0].message
+            return TaskDecision(
+                done=True, success=False,
+                reason="The correction step must select red and redraw.",
+            )
+
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(computer, TaskPolicy(max_steps=4)).run(
+            "Draw a red circle near the centre of the canvas and verify it.",
+            planner,
+        )
+
+    assert not result.success
+    assert result.status == "failed"
+    assert planner.calls == 2
+    assert len(result.steps) == 1
+    assert result.steps[0].dispatched
+    assert not result.steps[0].verified
+

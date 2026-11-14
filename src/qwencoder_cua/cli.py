@@ -176,7 +176,7 @@ def run_goal(
             driver = CuaDriverBackend()
         except ImportError as exc:
             raise typer.BadParameter(
-                'The Cua Driver backend requires pip install -e ".[windows,cua]".'
+                'The Cua Driver backend requires pip install -e ".[cua]".'
             ) from exc
         print(
             "[yellow]Experimental backend:[/yellow] Cua Driver owns window capture, "

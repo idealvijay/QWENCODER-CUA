@@ -262,7 +262,11 @@ def test_target_alias_is_resolved_and_rebound_across_fresh_observations():
                     expected={"active_window_title_contains": "Paint"},
                 ))
             assert history[-1].dispatched and history[-1].verified
-            return TaskDecision(done=True, success=True, reason="Ellipse tool selected.")
+            assert not any(item.action in {"draw_path", "drag"} for item in history)
+            return TaskDecision(
+                done=True, success=False,
+                reason="Ellipse selection worked, but the circle has not been drawn yet.",
+            )
 
     driver = PaintDriver()
     detector = ChangingEllipseTargetDetector()
@@ -336,7 +340,10 @@ def test_tiny_shape_tool_highlight_passes_target_selection_verification():
             assert len(history) == 1
             assert history[0].dispatched and history[0].verified
             assert "4/4096 samples" in history[0].message
-            return TaskDecision(done=True, success=True, reason="Ellipse tool selected.")
+            return TaskDecision(
+                done=True, success=False,
+                reason="The toolbar highlight changed, but no circle was drawn.",
+            )
 
     driver = TinyHighlightDriver()
     with Computer(driver=driver, accessibility=False) as computer:

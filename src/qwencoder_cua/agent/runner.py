@@ -8,14 +8,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Literal, Protocol
 from uuid import uuid4
+import re
+from math import hypot
 
 from qwencoder_cua.agent.plan import (
     TaskDecision, TaskPlan, TaskRunResult, TaskStep, TaskStepResult,
 )
 from qwencoder_cua.agent.policy import TaskPolicy
 from qwencoder_cua.core.exceptions import CUAError
+from qwencoder_cua.core.target_errors import AmbiguousTargetError, TargetNotFoundError
 from qwencoder_cua.execution.verifier import verify_observation
 from qwencoder_cua.models.observation import Observation
+from qwencoder_cua.models.target import UITarget
 from qwencoder_cua.agent.coordinates import planner_image_dimensions
 from qwencoder_cua.perception import TargetDetector
 
@@ -89,6 +93,38 @@ class TaskRunner:
                 return self._run_result(run_id, goal, False, "failed", history,
                                         "Planner returned no action.", started)
 
+            # Target IDs belong to the planner's observation. Resolve the semantic
+            # target now and carry its identity into dispatch, rather than expecting
+            # an observation-scoped ID to survive a second screenshot capture.
+            target_hint = None
+            if decision.step.action == "click_target":
+                try:
+                    target_hint = self._resolve_planned_target_hint(
+                        decision.step, observation
+                    )
+                except (TargetNotFoundError, AmbiguousTargetError) as exc:
+                    stale_target_replans += 1
+                    failed = TaskStepResult(
+                        step_id=decision.step.step_id,
+                        action=decision.step.action,
+                        dispatched=False,
+                        verified=False,
+                        message=(
+                            f"Planner target validation failed: {exc}. Use only an exact "
+                            "target from the current observation's available_targets. "
+                            "When an ID is an approximate label, use a coordinate grounded "
+                            "in the current screenshot instead."
+                        ),
+                        before_observation_id=observation.observation_id,
+                    )
+                    history.append(failed)
+                    if stale_target_replans <= max_stale_target_replans:
+                        continue
+                    return self._run_result(
+                        run_id, goal, False, "failed", history,
+                        "Planner target was not present or was ambiguous.", started,
+                    )
+
             # One-step execution inherits the remaining global time budget.
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
             if remaining <= 0:
@@ -103,7 +139,8 @@ class TaskRunner:
             if approve is not None:
                 wrapped_approval = lambda step, _local_index: approve(step, index)
             step_result = step_runner.execute(
-                step_plan, approve=wrapped_approval, coordinate_space="planner_image"
+                step_plan, approve=wrapped_approval, coordinate_space="planner_image",
+                target_hint=target_hint,
             )
             if not step_result.success:
                 if (
@@ -237,6 +274,7 @@ class TaskRunner:
         plan: TaskPlan,
         approve: ApprovalCallback | None = None,
         coordinate_space: Literal["desktop", "window", "planner_image"] = "desktop",
+        target_hint: UITarget | None = None,
     ) -> TaskRunResult:
         """Execute a fixed plan.
 
@@ -295,7 +333,9 @@ class TaskRunner:
                 dispatch_coordinate_space = coordinate_space
                 try:
                     if step.action == "click_target":
-                        dispatch_step = self._resolve_target_click(step, before)
+                        dispatch_step = self._resolve_target_click(
+                            step, before, target_hint=target_hint
+                        )
                         dispatch_coordinate_space = (
                             "window" if before.screenshot
                             and before.screenshot.coordinate_space == "window"
@@ -382,13 +422,128 @@ class TaskRunner:
             else "One or more steps were not verified.", started,
         )
 
-    def _resolve_target_click(self, step: TaskStep, observation: Observation) -> TaskStep:
-        """Resolve a named target against the fresh pre-dispatch screenshot."""
+    @staticmethod
+    def _target_id_alias_tokens(target_id: str) -> set[str]:
+        reserved = {
+            "desktop", "paint", "photoshop", "tool", "shape", "control",
+            "button", "color", "menu", "field", "canvas", "unknown",
+        }
+        return {
+            token for token in re.findall(r"[a-z0-9]+", target_id.casefold())
+            if token not in reserved and len(token) > 1
+        }
+
+    def _resolve_planned_target_hint(
+        self, step: TaskStep, observation: Observation
+    ) -> UITarget:
+        """Resolve exact planner IDs, with a unique semantic-label fallback for model aliases."""
         registry = self.target_detector.detect(observation)
-        target = registry.resolve(
-            step.target_id,
-            observation_id=observation.observation_id,
+        try:
+            return registry.resolve(
+                step.target_id, observation_id=observation.observation_id
+            )
+        except TargetNotFoundError:
+            pass
+
+        tokens = self._target_id_alias_tokens(step.target_id)
+        if not tokens:
+            raise TargetNotFoundError(
+                f"Target {step.target_id!r} is not in the planner observation."
+            )
+        candidates = []
+        for target in registry.all(observation_id=observation.observation_id):
+            if not target.visible or not target.enabled or target.confidence < 0.65:
+                continue
+            searchable = " ".join((
+                target.label,
+                target.kind,
+                str(target.metadata.get("automation_id") or ""),
+                str(target.metadata.get("class_name") or ""),
+            )).casefold()
+            words = set(re.findall(r"[a-z0-9]+", searchable))
+            if tokens.intersection(words):
+                candidates.append(target)
+
+        if len(candidates) == 1:
+            return candidates[0]
+        if len(candidates) > 1:
+            raise AmbiguousTargetError(
+                f"Target alias {step.target_id!r} matches {len(candidates)} visible controls."
+            )
+        raise TargetNotFoundError(
+            f"Target {step.target_id!r} is not among the current available targets."
         )
+
+    @staticmethod
+    def _same_semantic_target(candidate: UITarget, hint: UITarget) -> bool:
+        """Compare stable UI semantics, deliberately ignoring observation-scoped element IDs."""
+        if candidate.kind != hint.kind:
+            return False
+        if " ".join(candidate.label.casefold().split()) != " ".join(
+            hint.label.casefold().split()
+        ):
+            return False
+        for key in ("role", "automation_id", "class_name", "parent_name"):
+            expected = hint.metadata.get(key)
+            actual = candidate.metadata.get(key)
+            if expected and actual != expected:
+                return False
+        return True
+
+    @staticmethod
+    def _nearest_semantic_target(
+        candidates: list[UITarget], hint: UITarget
+    ) -> UITarget:
+        if len(candidates) == 1:
+            return candidates[0]
+        ranked = sorted(
+            candidates,
+            key=lambda item: hypot(
+                item.center.x - hint.center.x, item.center.y - hint.center.y
+            ),
+        )
+        best_distance = hypot(
+            ranked[0].center.x - hint.center.x,
+            ranked[0].center.y - hint.center.y,
+        )
+        second_distance = hypot(
+            ranked[1].center.x - hint.center.x,
+            ranked[1].center.y - hint.center.y,
+        )
+        width = max(hint.bounds.width, ranked[0].bounds.width)
+        height = max(hint.bounds.height, ranked[0].bounds.height)
+        max_distance = max(12.0, hypot(width, height) * 0.5)
+        if best_distance <= max_distance and second_distance - best_distance >= 4.0:
+            return ranked[0]
+        raise AmbiguousTargetError(
+            f"Fresh observation contains {len(candidates)} possible matches for "
+            f"target {hint.label!r}; refusing to guess."
+        )
+
+    def _resolve_target_click(
+        self,
+        step: TaskStep,
+        observation: Observation,
+        target_hint: UITarget | None = None,
+    ) -> TaskStep:
+        """Re-identify a planner target in the fresh pre-dispatch observation."""
+        registry = self.target_detector.detect(observation)
+        if target_hint is None:
+            target = registry.resolve(
+                step.target_id,
+                observation_id=observation.observation_id,
+            )
+        else:
+            candidates = [
+                item for item in registry.all(observation_id=observation.observation_id)
+                if item.visible and item.enabled and item.confidence >= 0.65
+                and self._same_semantic_target(item, target_hint)
+            ]
+            if not candidates:
+                raise TargetNotFoundError(
+                    f"Could not re-identify {target_hint.label!r} in the fresh observation."
+                )
+            target = self._nearest_semantic_target(candidates, target_hint)
         center = target.center
         return TaskStep(
             step_id=step.step_id,

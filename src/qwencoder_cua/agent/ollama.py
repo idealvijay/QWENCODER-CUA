@@ -52,6 +52,13 @@ def _normalize_draw_path_points(step_data: dict[str, Any]) -> None:
         ]
 
 
+MAX_NUM_CTX = 20480
+MAX_PROMPT_CONTEXT_CHARS = 36000
+MAX_ACCESSIBLE_ELEMENTS = 80
+MAX_PROMPT_TARGETS = 48
+MAX_COMPLETED_STEPS = 6
+
+
 SYSTEM_PROMPT = """You are the planning component of QWENCODER CUA, a local desktop automation agent.
 Return exactly one JSON object matching:
 {"done": boolean, "success": boolean, "reason": string, "step": TaskStep object or null}
@@ -91,10 +98,12 @@ Allowed actions:
 - drag: start_x, start_y, end_x, end_y, optional button and duration_seconds
 - draw_path: points (2-64 objects, each exactly {"x": int, "y": int}), optional button and duration_seconds
 
-Pointer coordinates are measured in the resized image shown to you (the
-`screen_size` field), not the full desktop. The runner automatically maps them to desktop
-pixels using `desktop_size`. Coordinates returned in actions MUST use `screen_size`
-pixels, never `desktop_size` pixels. Before returning a coordinate action, check every
+The image shown to you is a reduced copy of the original screenshot (maximum 640x400).
+Pointer coordinates MUST be measured in the reduced image dimensions in the `screen_size`
+field. The `capture_size` field records the original screenshot resolution. Never output
+coordinates measured against `capture_size`: the runner scales your `screen_size` points
+back to original screenshot pixels, then adds the target-window origin when applicable.
+This preserves full-resolution input accuracy while keeping the vision payload small. Before returning a coordinate action, check every
 coordinate numerically: `0 <= x < screen_size.width` and `0 <= y < screen_size.height`.
 For drag, check both endpoints; for draw_path, check every waypoint. Never return a coordinate
 outside those limits, even if the full desktop resolution is larger. If you cannot locate a
@@ -208,20 +217,27 @@ class OllamaTaskPlanner:
             self.num_ctx = int(raw_num_ctx)
         except (TypeError, ValueError) as exc:
             raise ValueError("QWENCODER_CUA_NUM_CTX must be a positive integer.") from exc
-        if not 2048 <= self.num_ctx <= 131072:
-            raise ValueError("num_ctx must be between 2048 and 131072 tokens.")
+        if self.num_ctx < 2048:
+            raise ValueError("num_ctx must be at least 2048 tokens.")
+        # Keep a hard ceiling even if an older terminal session exports 32768 or more.
+        self.num_ctx = min(self.num_ctx, MAX_NUM_CTX)
         self.timeout_seconds = timeout_seconds
         self.target_detector = target_detector or TargetDetector()
 
     def plan_next(self, goal: str, observation: Observation, history: list[Any]) -> TaskDecision:
         elements = [
             {
-                "role": item.role, "name": item.name, "value": item.value,
-                "automation_id": item.automation_id, "class_name": item.class_name,
-                "parent_name": item.parent_name, "bounds": item.bounds.model_dump() if item.bounds else None,
-                "enabled": item.enabled, "visible": item.visible, "actions": item.actions,
+                "role": item.role,
+                "name": item.name[:160] if item.name else None,
+                "value": item.value[:160] if item.value else None,
+                "automation_id": item.automation_id[:100] if item.automation_id else None,
+                "class_name": item.class_name[:100] if item.class_name else None,
+                "parent_name": item.parent_name[:120] if item.parent_name else None,
+                "bounds": item.bounds.model_dump() if item.bounds else None,
+                "enabled": item.enabled, "visible": item.visible,
+                "actions": item.actions[:8],
             }
-            for item in observation.elements[:160]
+            for item in observation.elements[:MAX_ACCESSIBLE_ELEMENTS]
         ]
         desktop_size = None
         screen_size = None
@@ -255,15 +271,47 @@ class OllamaTaskPlanner:
             "accessibility_available": observation.accessibility_available,
             "desktop_size": desktop_size,
             "screen_size": screen_size,
+            "capture_size": (
+                {"width": source_size[0], "height": source_size[1]}
+                if source_size else None
+            ),
             "accessible_elements": elements,
             "available_targets": target_registry.prompt_context(
                 observation_id=observation.observation_id,
                 source_size=source_size,
                 output_size=output_size,
-            )[:80],
-            "completed_steps": [item.model_dump() for item in history[-12:]],
+            )[:MAX_PROMPT_TARGETS],
+            "completed_steps": [
+                {
+                    "action": item.action,
+                    "dispatched": item.dispatched,
+                    "verified": item.verified,
+                    "message": item.message[:240],
+                }
+                for item in history[-MAX_COMPLETED_STEPS:]
+            ],
         }
-        message = {"role": "user", "content": json.dumps(context, ensure_ascii=False)}
+        context_text = json.dumps(context, ensure_ascii=False)
+        # Bound text tokens as well as image tokens. Drop the least useful tail entries
+        # in stages while retaining enough current UI context for visual grounding.
+        while len(context_text) > MAX_PROMPT_CONTEXT_CHARS:
+            if len(context["accessible_elements"]) > 24:
+                context["accessible_elements"] = context["accessible_elements"][:max(
+                    24, len(context["accessible_elements"]) // 2
+                )]
+            elif len(context["available_targets"]) > 12:
+                context["available_targets"] = context["available_targets"][:max(
+                    12, len(context["available_targets"]) // 2
+                )]
+            elif len(context["completed_steps"]) > 2:
+                context["completed_steps"] = context["completed_steps"][-2:]
+            else:
+                raise CUAError(
+                    "Planner metadata exceeds the safe context budget after compaction. "
+                    "Reduce the accessibility tree or goal size and retry."
+                )
+            context_text = json.dumps(context, ensure_ascii=False)
+        message = {"role": "user", "content": context_text}
         images = self._read_observation_image(observation) if self.include_images else []
         if images:
             message["images"] = images
@@ -572,11 +620,13 @@ class OllamaTaskPlanner:
             from PIL import Image
             with Image.open(path) as source:
                 image = source.convert("RGB")
-                target_size = planner_image_dimensions(*image.size)
-                if image.size != target_size:
-                    image = image.resize(target_size, Image.Resampling.LANCZOS)
+                target_size = planner_image_dimensions(*source.size)
+                # Downsample before making the RGB copy to avoid holding two full-size
+                # decoded RGB frames while preparing the vision request.
+                source.thumbnail(target_size, Image.Resampling.LANCZOS)
+                image = source.convert("RGB")
                 buffer = io.BytesIO()
-                image.save(buffer, format="JPEG", quality=84, optimize=True)
+                image.save(buffer, format="JPEG", quality=80, optimize=True)
             return [base64.b64encode(buffer.getvalue()).decode("ascii")]
         except (OSError, ValueError):
             return []

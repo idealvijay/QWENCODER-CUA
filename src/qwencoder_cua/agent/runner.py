@@ -11,6 +11,8 @@ from pathlib import Path
 from typing import Callable, Literal, Protocol
 from uuid import uuid4
 
+from PIL import Image
+
 from qwencoder_cua.agent.plan import (
     TaskDecision, TaskPlan, TaskRunResult, TaskStep, TaskStepResult,
 )
@@ -65,6 +67,10 @@ class TaskRunner:
         max_freehand_fallbacks = 1
         premature_success_replans = 0
         max_premature_success_replans = 1
+        fallback_path_replans = 0
+        max_fallback_path_replans = 2
+        red_stroke_replans = 0
+        max_red_stroke_replans = 1
 
         for index in range(1, self.policy.max_steps + 2):
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
@@ -80,6 +86,30 @@ class TaskRunner:
                     decision = TaskDecision.model_validate(decision)
             finally:
                 Path(screenshot_path).unlink(missing_ok=True)
+
+            if (
+                decision.done
+                and not decision.success
+                and freehand_fallbacks < max_freehand_fallbacks
+                and self._is_ellipse_fallback_handoff(decision.reason)
+                and self._is_paint_drawing_task(goal, observation)
+            ):
+                freehand_fallbacks += 1
+                handoff = TaskStepResult(
+                    step_id=uuid4().hex[:12],
+                    action="ellipse_fallback_handoff",
+                    dispatched=False,
+                    verified=False,
+                    message=(
+                        f"{decision.reason} ELLIPSE FALLBACK REQUIRED: Do not try Ellipse/Oval "
+                        "again. Select Pencil/Pen (or Brush), select red, then draw one smooth "
+                        "closed circle with draw_path. Do not report success until the red circle "
+                        "is visible on the canvas."
+                    ),
+                    before_observation_id=observation.observation_id,
+                )
+                history.append(handoff)
+                continue
 
             if decision.done:
                 if (
@@ -186,6 +216,33 @@ class TaskRunner:
                     decision.step, target_hint
                 )
 
+            if freehand_fallbacks and step_to_execute.action == "draw_path":
+                path_error = self._validate_freehand_circle_path(
+                    step_to_execute, observation
+                )
+                if path_error:
+                    fallback_path_replans += 1
+                    history.append(TaskStepResult(
+                        step_id=step_to_execute.step_id,
+                        action="draw_path",
+                        dispatched=False,
+                        verified=False,
+                        message=(
+                            "FREEHAND CIRCLE PATH REJECTED: " + path_error +
+                            " Rebuild it as a large, smooth, closed circle on the white canvas "
+                            "using 16-24 evenly spaced points. Do not draw a short line or "
+                            "place the points in the toolbar."
+                        ),
+                        before_observation_id=observation.observation_id,
+                    ))
+                    if fallback_path_replans <= max_fallback_path_replans:
+                        continue
+                    return self._run_result(
+                        run_id, goal, False, "failed", history,
+                        "Planner did not produce a valid freehand circle path.", started,
+                    )
+                step_to_execute = self._tune_fallback_draw_verification(step_to_execute)
+
             # One-step execution inherits the remaining global time budget.
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
             if remaining <= 0:
@@ -202,8 +259,29 @@ class TaskRunner:
             step_result = step_runner.execute(
                 step_plan, approve=wrapped_approval, coordinate_space="planner_image",
                 target_hint=target_hint,
+                require_red_draw=bool(freehand_fallbacks and step_to_execute.action == "draw_path"),
             )
             if not step_result.success:
+                if (
+                    freehand_fallbacks
+                    and step_to_execute.action == "draw_path"
+                    and step_result.steps
+                    and "new red pixels" in step_result.steps[-1].message.casefold()
+                    and red_stroke_replans < max_red_stroke_replans
+                ):
+                    red_stroke_replans += 1
+                    failed = step_result.steps[-1].model_copy(update={
+                        "message": (
+                            f"{step_result.steps[-1].message} RED STROKE CORRECTION REQUIRED: "
+                            "The fallback stroke was not red. Undo that last stroke with Ctrl+Z, "
+                            "select the red foreground colour from the Paint palette, then draw "
+                            "the same smooth closed circle again with Pencil/Pen or Brush. "
+                            "Do not claim success until new red pixels are visible on the canvas."
+                        )
+                    })
+                    history.extend([*step_result.steps[:-1], failed])
+                    continue
+
                 if (
                     freehand_fallbacks < max_freehand_fallbacks
                     and self._is_ellipse_selection_step(
@@ -288,6 +366,128 @@ class TaskRunner:
             run_id, goal, False, "timed_out", history,
             f"Planner did not finish within the {self.policy.max_steps}-step limit.", started,
         )
+
+    @staticmethod
+    def _is_ellipse_fallback_handoff(reason: str | None) -> bool:
+        text = (reason or "").casefold()
+        return (
+            ("ellipse" in text or "oval" in text)
+            and ("freehand" in text or "switch" in text or "fallback" in text)
+            and any(word in text for word in ("pen", "pencil", "brush", "circle"))
+        )
+
+    @staticmethod
+    def _validate_freehand_circle_path(
+        step: TaskStep, observation: Observation
+    ) -> str | None:
+        """Reject degenerate model paths before they can leave a short mark on the canvas."""
+        points = step.points or []
+        if len(points) < 12:
+            return f"Expected at least 12 waypoints; received {len(points)}."
+        if not observation.screenshot:
+            return "The current screenshot dimensions are unavailable."
+        image_width, image_height = planner_image_dimensions(
+            observation.screenshot.width, observation.screenshot.height
+        )
+        xs = [point.x for point in points]
+        ys = [point.y for point in points]
+        width = max(xs) - min(xs)
+        height = max(ys) - min(ys)
+        minimum_span = max(10, round(min(image_width, image_height) * 0.07))
+        if width < minimum_span or height < minimum_span:
+            return (
+                f"Path bounds are only {width}x{height} planner pixels; each axis must span "
+                f"at least {minimum_span} pixels."
+            )
+        ratio = width / max(1, height)
+        if not 0.60 <= ratio <= 1.67:
+            return (
+                f"Path bounds are {width}x{height} (aspect ratio {ratio:.2f}); "
+                "a circle needs approximately equal width and height."
+            )
+
+        # A circle should be centred and have a reasonably consistent radius.
+        center_x = sum(xs) / len(xs)
+        center_y = sum(ys) / len(ys)
+        radii = [hypot(point.x - center_x, point.y - center_y) for point in points[:-1]]
+        mean_radius = sum(radii) / max(1, len(radii))
+        if mean_radius < minimum_span * 0.35:
+            return "The path radius is too small to remain visible on the canvas."
+        variance = sum((radius - mean_radius) ** 2 for radius in radii) / max(1, len(radii))
+        coefficient = (variance ** 0.5) / max(mean_radius, 1e-6)
+        if coefficient > 0.38:
+            return (
+                f"Path is not circular enough (radius variation {coefficient:.2f}); "
+                "use evenly spaced points around a single circumference."
+            )
+        closure = hypot(points[-1].x - points[0].x, points[-1].y - points[0].y)
+        if closure > max(2.0, mean_radius * 0.45):
+            return (
+                f"Path is not closed (endpoints are {closure:.1f} pixels apart); "
+                "repeat the first point at the end."
+            )
+        return None
+
+    @staticmethod
+    def _tune_fallback_draw_verification(step: TaskStep) -> TaskStep:
+        """Avoid thumbnail quantization rejecting a visible freehand stroke."""
+        expected = dict(step.expected)
+        config = expected.get("screen_changed")
+        if not isinstance(config, dict):
+            return step
+        try:
+            current = float(config.get("min_fraction", 0.01))
+        except (TypeError, ValueError):
+            current = 0.01
+        expected["screen_changed"] = {
+            **config,
+            "min_fraction": min(current, 0.00025),
+        }
+        return step.model_copy(update={"expected": expected})
+
+    @staticmethod
+    def _verify_new_red_stroke(
+        before_path: str,
+        after_path: str,
+        step: TaskStep,
+        before: Observation,
+    ) -> tuple[bool, str]:
+        """Require new red pixels in the actual stroke region, not just the palette."""
+        if not before.screenshot or not step.points:
+            return False, "No new red pixels could be checked for this stroke."
+        output_width, output_height = planner_image_dimensions(
+            before.screenshot.width, before.screenshot.height
+        )
+        scale_x = before.screenshot.width / output_width
+        scale_y = before.screenshot.height / output_height
+        xs = [round(point.x * scale_x) for point in step.points]
+        ys = [round(point.y * scale_y) for point in step.points]
+        pad = max(4, round(min(scale_x, scale_y) * 2))
+        left = max(0, min(xs) - pad)
+        top = max(0, min(ys) - pad)
+        right = min(before.screenshot.width, max(xs) + pad + 1)
+        bottom = min(before.screenshot.height, max(ys) + pad + 1)
+        try:
+            with Image.open(before_path) as image:
+                before_crop = image.convert("RGB").crop((left, top, right, bottom))
+            with Image.open(after_path) as image:
+                after_crop = image.convert("RGB").crop((left, top, right, bottom))
+        except (OSError, ValueError) as exc:
+            return False, f"Could not inspect the stroke colour: {exc}"
+
+        def is_red(pixel):
+            red, green, blue = pixel
+            return red >= 130 and red >= green * 1.45 and red >= blue * 1.45 and green < 120 and blue < 120
+
+        old_red = sum(1 for pixel in before_crop.getdata() if is_red(pixel))
+        new_red = sum(1 for pixel in after_crop.getdata() if is_red(pixel))
+        added = max(0, new_red - old_red)
+        if added < 5:
+            return False, (
+                f"No new red pixels were detected in the drawing region "
+                f"({added} added; at least 5 required). Select red before drawing."
+            )
+        return True, f"Verified {added} new red pixels in the freehand circle region."
 
     @staticmethod
     def _is_ellipse_selection_step(
@@ -427,6 +627,7 @@ class TaskRunner:
         approve: ApprovalCallback | None = None,
         coordinate_space: Literal["desktop", "window", "planner_image"] = "desktop",
         target_hint: UITarget | None = None,
+        require_red_draw: bool = False,
     ) -> TaskRunResult:
         """Execute a fixed plan.
 
@@ -544,6 +745,12 @@ class TaskRunner:
                         verified, message = verify_observation(
                             after, step.expected, previous_screenshot_path=str(before_path)
                         )
+                        if verified and require_red_draw and step.action == "draw_path":
+                            red_ok, red_message = self._verify_new_red_stroke(
+                                str(before_path), str(after_path), step, before
+                            )
+                            verified = red_ok
+                            message = f"{message} {red_message}"
                     except Exception as exc:
                         verified, message = False, f"Invalid postcondition: {exc}"
                     if verified or time.monotonic() >= deadline:

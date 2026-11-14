@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw
 from qwencoder_cua.agent import TaskDecision, TaskPolicy, TaskRunner, TaskStep
 from qwencoder_cua.core.computer import Computer
 from qwencoder_cua.models.capabilities import DriverCapabilities
-from qwencoder_cua.models.geometry import Rect
+from qwencoder_cua.models.geometry import Point, Rect
 from qwencoder_cua.models.target import UITarget
 from qwencoder_cua.models.window import WindowInfo
 from qwencoder_cua.perception.target_registry import TargetRegistry
@@ -495,15 +495,21 @@ def test_paint_ellipse_failure_falls_back_to_pen_and_verifies_red_circle():
                 # the 100x80 drawable canvas.
                 points = [
                     Point(x=65, y=40),
-                    Point(x=61, y=49),
-                    Point(x=54, y=55),
-                    Point(x=45, y=55),
-                    Point(x=38, y=49),
+                    Point(x=64, y=46),
+                    Point(x=61, y=51),
+                    Point(x=56, y=55),
+                    Point(x=50, y=55),
+                    Point(x=44, y=55),
+                    Point(x=39, y=51),
+                    Point(x=36, y=46),
                     Point(x=35, y=40),
-                    Point(x=38, y=31),
-                    Point(x=45, y=25),
-                    Point(x=54, y=25),
-                    Point(x=61, y=31),
+                    Point(x=36, y=34),
+                    Point(x=39, y=29),
+                    Point(x=44, y=25),
+                    Point(x=50, y=25),
+                    Point(x=56, y=25),
+                    Point(x=61, y=29),
+                    Point(x=64, y=34),
                     Point(x=65, y=40),
                 ]
                 return TaskDecision(step=TaskStep(
@@ -583,3 +589,127 @@ def test_paint_ellipse_failure_fallback_is_only_used_once():
     assert len(result.steps) == 2
     assert all(not step.dispatched for step in result.steps)
     assert driver.clicked == []
+
+
+
+def test_paint_terminal_ellipse_failure_is_converted_to_freehand_handoff():
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                return TaskDecision(
+                    done=True,
+                    success=False,
+                    reason=(
+                        "No ellipse/oval tool selected; switching to freehand circle. "
+                        "Select Pencil/Pen/Brush, red color, then draw a circle on canvas."
+                    ),
+                )
+            assert len(history) == 1
+            assert history[0].action == "ellipse_fallback_handoff"
+            assert "ELLIPSE FALLBACK REQUIRED" in history[0].message
+            assert observation.active_window.process_name == "mspaint.exe"
+            # The runner must resume planning instead of returning at the first terminal failure.
+            return TaskDecision(
+                done=True, success=False,
+                reason="The test stops before performing the fallback actions.",
+            )
+
+    with Computer(driver=PaintDriver(), accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(computer, TaskPolicy(max_steps=5)).run(
+            "Draw a red circle near the centre of the canvas and verify it.", planner
+        )
+
+    assert not result.success
+    assert planner.calls == 2
+    assert len(result.steps) == 1
+    assert result.steps[0].action == "ellipse_fallback_handoff"
+
+
+def test_fallback_circle_path_validator_rejects_short_vertical_mark():
+    driver = PaintDriver()
+    with Computer(driver=driver, accessibility=False) as computer:
+        observation = computer.observe()
+        vertical = TaskStep(
+            action="draw_path",
+            points=[
+                Point(x=50, y=20), Point(x=50, y=25),
+                Point(x=50, y=30), Point(x=50, y=35),
+                Point(x=50, y=40), Point(x=50, y=45),
+                Point(x=50, y=50), Point(x=50, y=55),
+                Point(x=50, y=60), Point(x=50, y=65),
+                Point(x=50, y=70), Point(x=50, y=75),
+            ],
+            expected={"screen_changed": {"min_fraction": 0.001}},
+        )
+        error = TaskRunner._validate_freehand_circle_path(vertical, observation)
+
+    assert error is not None
+    assert "each axis must span" in error or "aspect ratio" in error
+
+
+def test_fallback_circle_path_validator_accepts_closed_circle():
+    import math
+
+    with Computer(driver=PaintDriver(), accessibility=False) as computer:
+        observation = computer.observe()
+        points = [
+            Point(
+                x=50 + round(20 * math.cos(index * math.tau / 20)),
+                y=40 + round(20 * math.sin(index * math.tau / 20)),
+            )
+            for index in range(20)
+        ]
+        points.append(points[0])
+        step = TaskStep(
+            action="draw_path",
+            points=points,
+            duration_seconds=0.5,
+            expected={"screen_changed": {"min_fraction": 0.001}},
+        )
+
+        assert TaskRunner._validate_freehand_circle_path(step, observation) is None
+        tuned = TaskRunner._tune_fallback_draw_verification(step)
+        assert tuned.expected["screen_changed"]["min_fraction"] == 0.00025
+
+
+def test_fallback_red_stroke_verifier_checks_new_red_pixels_only(tmp_path):
+    before_path = tmp_path / "before.png"
+    after_path = tmp_path / "after.png"
+    before = Image.new("RGB", (100, 80), "white")
+    after = before.copy()
+    ImageDraw.Draw(after).ellipse((30, 20, 70, 60), outline=(255, 0, 0), width=2)
+    before.save(before_path)
+    after.save(after_path)
+
+    with Computer(driver=PaintDriver(), accessibility=False) as computer:
+        observation = computer.observe()
+        step = TaskStep(
+            action="draw_path",
+            points=[
+                Point(x=30, y=40), Point(x=40, y=25), Point(x=60, y=25),
+                Point(x=70, y=40), Point(x=60, y=55), Point(x=40, y=55),
+                Point(x=30, y=40),
+            ],
+            expected={"screen_changed": {"min_fraction": 0.00025}},
+        )
+        red_ok, red_message = TaskRunner._verify_new_red_stroke(
+            str(before_path), str(after_path), step, observation
+        )
+
+        black = before.copy()
+        ImageDraw.Draw(black).ellipse((30, 20, 70, 60), outline=(0, 0, 0), width=2)
+        black_path = tmp_path / "black.png"
+        black.save(black_path)
+        black_ok, black_message = TaskRunner._verify_new_red_stroke(
+            str(before_path), str(black_path), step, observation
+        )
+
+    assert red_ok
+    assert "new red pixels" in red_message
+    assert not black_ok
+    assert "No new red pixels" in black_message

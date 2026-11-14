@@ -179,8 +179,17 @@ coordinate click grounded in the NEW screenshot. The runner permits only one sta
 
 If any completed_steps message contains "ELLIPSE FALLBACK REQUIRED", this is a mandatory
 task-state transition. Never attempt Ellipse/Oval again. Select Pencil/Pen (or Brush if Pencil/Pen
-is unavailable), select red, then draw the closed freehand circle with draw_path. Do not finish
+is unavailable), select the RED foreground swatch (not black), then draw the closed freehand circle
+with draw_path. The runner checks path point count, closure, aspect ratio and circularity before
+dispatch; a rejected path must be replaced with a larger, evenly spaced circle. Do not finish
 until the screenshot visibly confirms the red circle on the canvas.
+
+If any completed_steps message contains "RED STROKE CORRECTION REQUIRED", the last stroke was not
+red. Undo only that last stroke with Ctrl+Z, select the red foreground colour, and repeat the
+validated closed draw_path. Keep the circle inside the drawable canvas.
+
+Keep the "reason" field to one short sentence (12 words or fewer). Return only one complete JSON
+object. Never leave JSON strings open or append commentary outside the object.
 
 A non-terminal response MUST use this exact structure (no wrapper keys):
 {"done": false, "success": true, "reason": "Why this one action is next.", "step": {
@@ -372,7 +381,34 @@ class OllamaTaskPlanner:
                 content = body.get("message", {}).get("content")
                 if not isinstance(content, str):
                     raise CUAError("Ollama returned no JSON message content.")
-                decision_data = json.loads(content)
+                try:
+                    decision_data = json.loads(content)
+                except json.JSONDecodeError as exc:
+                    if attempt == 0:
+                        messages = [
+                            *messages,
+                            {"role": "assistant", "content": content},
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Your previous response was malformed JSON. Return exactly "
+                                    "one syntactically complete JSON object. Properly close every "
+                                    "quoted string and escape embedded quotes and newlines. Do not "
+                                    "include markdown, code fences or commentary. Keep the reason "
+                                    "field to one short sentence (12 words or fewer). For an action, "
+                                    "include a complete step with an allowed action and a non-empty "
+                                    "expected object. For draw_path, use 16-24 point objects with "
+                                    "integer x and y fields and a smooth closed circle.\n"
+                                    f"JSON parse error: {exc}\n"
+                                    f"Previous malformed response: {content[:3000]}"
+                                ),
+                            },
+                        ]
+                        continue
+                    raise CUAError(
+                        "Ollama returned malformed task-decision JSON after one correction "
+                        f"attempt: {exc}. Response excerpt: {content[:600]}"
+                    ) from exc
 
                 if isinstance(decision_data, dict):
                     # Ignore formatting-only keys, but continue to reject meaningful extras.
@@ -503,16 +539,19 @@ class OllamaTaskPlanner:
                     if attempt == 0:
                         validation_detail = str(exc)[:1800]
                         previous_response = content[:3000]
+                        repair_intro = (
+                            "Your previous JSON was rejected by the TaskDecision / TaskStep schema. "
+                            "Correct it and return exactly one complete JSON object. "
+                            "Do not omit required fields and do not invent field names.\n"
+                        )
                         messages = [
                             *messages,
                             {"role": "assistant", "content": content},
                             {
                                 "role": "user",
                                 "content": (
-                                    "Your previous JSON was rejected by the TaskDecision / TaskStep "
-                                    "schema. Correct it and return exactly one complete JSON object. "
-                                    "Do not omit required fields and do not invent field names.\n"
-                                    "For a non-terminal action, the top-level decision must have "
+                                    repair_intro
+                                    + "For a non-terminal action, the top-level decision must have "
                                     "\"done\": false and \"step\" must be an object containing "
                                     "a required \"action\" field and a required non-empty "
                                     "\"expected\" postcondition object. Use \"expected\", never "

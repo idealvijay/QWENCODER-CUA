@@ -1,6 +1,6 @@
 # QWENCODER CUA Driver
 
-**Version 0.6.0** — local-first Python desktop automation for Windows and Linux.
+**Version 0.7.0** — local-first Python desktop automation for Windows and Linux.
 Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
 ## v0.5 highlights
@@ -21,6 +21,8 @@ Hybrid perception uses accessibility semantics when available and screenshots as
 - **Canvas-relative scene model:** describe layered artwork using normalized geometry independent of desktop resolution and window position.
 - **Deterministic geometry:** generate smooth ellipse, cubic Bezier and polygon paths; resolve scene objects against the current canvas bounds.
 - **Palette swatch detector:** locate a requested colour only within an explicitly supplied palette region, avoiding guesses across the whole desktop.
+- **Ollama scene planner:** convert a natural-language artwork brief into a schema-validated normalized ScenePlan.
+- **Verified drawing executor:** render supported scene objects as bounded paths, re-detecting the canvas and verifying every stroke.
 
 ## Platform status
 
@@ -422,7 +424,40 @@ Artwork can be represented by `ScenePlan` objects using normalized canvas coordi
 `CanvasRegion` resolves those normalized objects to current screen pixels. Cubic Bezier and
 ellipse helpers generate deterministic paths independently of the vision model.
 
-This release provides the target-grounding and scene-geometry foundation. Automated execution
-of a complete multi-object scene in a target application, including style/tool changes and
-per-object visual correction, is the next integration stage; the scene resolver itself does not
-yet draw a whole scene into Paint.
+## Scene planning and drawing execution
+
+The scene planner and executor are separate from the one-step desktop task planner. The scene
+planner creates normalized geometry; the executor grounds that geometry to the live canvas and
+sends bounded strokes.
+
+```python
+from qwencoder_cua import Computer, DrawingExecutor, OllamaScenePlanner, TaskPolicy
+
+scene = OllamaScenePlanner().plan(
+    "Draw a simple sun above two rolling hills. Use outline shapes.",
+    canvas_target_id="paint.canvas.canvas",
+)
+
+with Computer() as computer:
+    executor = DrawingExecutor(computer, policy=TaskPolicy(max_steps=15))
+    preview = executor.preview(scene)  # resolves geometry; does not draw
+    result = executor.execute(scene)
+    print(result.success, result.message)
+```
+
+The exact canvas target ID depends on what the current accessibility/visual detector exposes.
+Inspect the target registry or inject a TargetDetector with a visual detector that emits the
+desired `paint.canvas.*` ID. The executor re-detects the canvas before every stroke and resolves
+normalized points against that fresh observation rather than replaying old screen coordinates.
+
+The default executor supports outline-only, one-pixel black strokes and assumes the target
+application's current tool is configured for freehand drawing. It does not select Paint tools,
+change colours, change brush width, fill shapes, set opacity, create native vector objects or
+manage layers. A caller may provide a `style_applier(DrawingStyle)` callback for application-
+specific stroke colour/width setup; fills and opacity remain unsupported. Use a freehand/brush
+tool, not a shape tool that interprets a path as a shape bounding-box drag.
+
+Long paths are split into overlapping chunks within the configured 2–64 waypoint limit. Each
+chunk is independently re-observed and screenshot-difference verified. Execution stops at the
+first missing canvas, invalid geometry, failed verification, approval denial or policy limit.
+Pass `approval_required=True` with an `approve(step, index)` callback to gate every stroke.

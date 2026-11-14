@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "qwencoder-cua"
-version = "0.6.0"
-description = "Local-first computer-use runtime with verified task planning and creative pointer paths"
+version = "0.7.0"
+description = "Local-first computer-use runtime with structured scene planning and verified drawing execution"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "MIT" }

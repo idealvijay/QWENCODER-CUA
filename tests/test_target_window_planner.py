@@ -5,6 +5,7 @@ import json
 from PIL import Image
 
 from qwencoder_cua.agent.ollama import OllamaTaskPlanner, SYSTEM_PROMPT
+from qwencoder_cua.models.element import UIElement
 from qwencoder_cua.models.observation import Observation, ScreenshotRef
 from qwencoder_cua.models.window import WindowInfo
 
@@ -107,3 +108,48 @@ def test_vision_image_is_downsampled_but_original_capture_is_preserved(tmp_path)
     # The on-disk original remains full resolution for verification and coordinate mapping.
     with Image.open(screenshot_path) as retained_original:
         assert retained_original.size == (1200, 800)
+
+
+
+def test_prompt_context_is_compacted_to_leave_room_for_image_tokens(monkeypatch):
+    captured = {}
+
+    def fake_urlopen(request, timeout):
+        captured["payload"] = json.loads(request.data.decode("utf-8"))
+        return FakeOllamaResponse({
+            "message": {
+                "content": json.dumps({
+                    "done": True,
+                    "success": True,
+                    "reason": "The visible controls are available.",
+                    "step": None,
+                })
+            }
+        })
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    elements = [
+        UIElement(
+            id=f"element-{index}",
+            role="button",
+            name=("Control " + str(index) + " " + "N" * 160),
+            value="V" * 160,
+            automation_id="A" * 100,
+            class_name="C" * 100,
+            parent_name="P" * 120,
+        )
+        for index in range(80)
+    ]
+    observation = Observation(
+        observation_id="obs-large-tree",
+        platform="windows",
+        elements=elements,
+    )
+
+    planner.plan_next("Inspect the visible controls.", observation, [])
+
+    user_context = captured["payload"]["messages"][1]["content"]
+    parsed = json.loads(user_context)
+    assert len(user_context) <= 24000
+    assert len(parsed["accessible_elements"]) < len(elements)

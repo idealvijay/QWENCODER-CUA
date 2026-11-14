@@ -530,7 +530,7 @@ class OllamaTaskPlanner:
                                 "role": "user",
                                 "content": (
                                     repair_intro
-                                    "For a non-terminal action, the top-level decision must have "
+                                    + "For a non-terminal action, the top-level decision must have "
                                     "\"done\": false and \"step\" must be an object containing "
                                     "a required \"action\" field and a required non-empty "
                                     "\"expected\" postcondition object. Use \"expected\", never "

@@ -234,7 +234,7 @@ def test_task_runner_maps_vision_click_coordinates_to_desktop():
     plan = TaskPlan(
         goal="Click the requested point from the planner screenshot",
         steps=[TaskStep(
-            action="click", x=640, y=320,
+            action="click", x=224, y=112,
             expected={"active_window_title_contains": "Paint"},
         )],
     )
@@ -305,4 +305,5 @@ def test_planner_context_matches_resized_image_dimensions(monkeypatch, tmp_path)
 
     user_context = json.loads(captured["payload"]["messages"][1]["content"])
     assert user_context["desktop_size"] == {"width": 3440, "height": 1440}
-    assert user_context["screen_size"] == {"width": 1280, "height": 536}
+    assert user_context["screen_size"] == {"width": 448, "height": 188}
+    assert user_context["capture_size"] == {"width": 3440, "height": 1440}

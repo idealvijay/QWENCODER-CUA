@@ -9,6 +9,7 @@ from qwencoder_cua.core.exceptions import UnsupportedOperationError
 from qwencoder_cua.models.capabilities import DriverCapabilities
 from qwencoder_cua.models.element import UIElement
 from qwencoder_cua.models.geometry import Rect
+from qwencoder_cua.models.observation import Observation, ScreenshotRef
 from qwencoder_cua.models.window import WindowInfo, WindowSelector
 
 
@@ -191,3 +192,34 @@ def test_target_window_selector_rejects_ambiguous_matches():
     ) as computer:
         with pytest.raises(UnsupportedOperationError, match="ambiguous"):
             computer.observe()
+
+
+
+def test_planner_image_coordinates_map_to_original_window_capture_and_origin():
+    observation = Observation(
+        observation_id="obs-scaled-window",
+        platform="windows",
+        screenshot=ScreenshotRef(
+            width=1200,
+            height=800,
+            origin_x=300,
+            origin_y=200,
+            coordinate_space="window",
+        ),
+    )
+    step = TaskStep(
+        action="click",
+        x=300,
+        y=200,
+        expected={"screen_changed": {"min_fraction": 0.001}},
+    )
+
+    assert TaskRunner._validate_pointer_bounds(
+        step, observation, coordinate_space="planner_image"
+    ) is None
+    mapped = TaskRunner._to_desktop_coordinates(
+        step, observation, coordinate_space="planner_image"
+    )
+
+    # 448x299 model-image point -> original capture pixels + current window origin.
+    assert (mapped.x, mapped.y) == (1104, 735)

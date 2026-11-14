@@ -25,6 +25,7 @@ def test_planner_uses_local_ollama_defaults(monkeypatch):
     assert planner.endpoint == "http://127.0.0.1:11434/api/chat"
     assert planner.model == "minicpm-v4.5:q4_0"
     assert planner.include_images
+    assert planner.num_ctx == 20000
 
 
 def test_screenshot_is_resized_and_encoded(tmp_path):
@@ -39,8 +40,7 @@ def test_screenshot_is_resized_and_encoded(tmp_path):
     raw = base64.b64decode(images[0])
     assert raw.startswith(b"\xff\xd8")
     with Image.open(BytesIO(raw)) as resized:
-        assert resized.width <= 1280
-        assert resized.height <= 800
+        assert resized.size == (448, 269)
 
 
 def test_text_only_model_does_not_receive_image_payload():
@@ -384,8 +384,8 @@ def test_planner_retries_out_of_range_coordinates_once(monkeypatch):
         "reason": "Click the ellipse tool inside the visible ribbon.",
         "step": {
             "action": "click",
-            "x": 800,
-            "y": 280,
+            "x": 400,
+            "y": 140,
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
     }
@@ -411,7 +411,7 @@ def test_planner_retries_out_of_range_coordinates_once(monkeypatch):
 
     assert result.step is not None
     assert result.step.action == "click"
-    assert result.step.x == 800
+    assert result.step.x == 400
     assert len(requests) == 2
     correction = requests[1]["messages"][-1]["content"]
     assert "Planner image dimensions" in correction
@@ -450,7 +450,7 @@ def test_planner_rejects_coordinates_still_out_of_range_after_retry(monkeypatch)
 
 
 def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
-    size = {"width": 1280, "height": 536}
+    size = {"width": 448, "height": 188}
     bad_click = TaskStep(
         action="click", x=6000, y=280,
         expected={"screen_changed": {"min_fraction": 0.001}},
@@ -469,7 +469,7 @@ def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
         expected={"screen_changed": {"min_fraction": 0.001}},
     )
     assert OllamaTaskPlanner._coordinate_errors(bad_path, size) == [
-        "Point 2 (1300, 20) is outside 0<=x<1280, 0<=y<536."
+        "Point 2 (1300, 20) is outside 0<=x<448, 0<=y<188."
     ]
 
 
@@ -478,6 +478,7 @@ def test_prompt_has_strict_planner_image_coordinate_bounds():
     assert "0 <= x < screen_size.width" in normalized
     assert "Coordinates returned in actions MUST use" in normalized
     assert "do not guess" in normalized
+    assert "maximum 448x448" in normalized
 
 
 
@@ -801,7 +802,7 @@ def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
         "reason": "Draw the circle outline.",
         "step": {
             "action": "draw_path",
-            "points": [coordinate for index in range(37) for coordinate in (600 + index, 200 + index)],
+            "points": [coordinate for index in range(37) for coordinate in (300 + index, 100 + index)],
             "duration_seconds": 1.0,
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
@@ -825,7 +826,7 @@ def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
     assert result.step.action == "draw_path"
     assert len(result.step.points) == 37
     assert [(point.x, point.y) for point in result.step.points[:3]] == [
-        (600, 200), (601, 201), (602, 202)
+        (300, 100), (301, 101), (302, 102)
     ]
 
 
@@ -836,7 +837,7 @@ def test_planner_normalizes_pair_array_draw_path_coordinates(monkeypatch):
         "reason": "Draw a short path.",
         "step": {
             "action": "draw_path",
-            "points": [[600, 200], [620, 220]],
+            "points": [[300, 100], [320, 120]],
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
     }
@@ -856,7 +857,7 @@ def test_planner_normalizes_pair_array_draw_path_coordinates(monkeypatch):
     result = planner.plan_next("Draw a short path.", observation, [])
 
     assert result.step is not None
-    assert [(point.x, point.y) for point in result.step.points] == [(600, 200), (620, 220)]
+    assert [(point.x, point.y) for point in result.step.points] == [(300, 100), (320, 120)]
 
 
 def test_planner_does_not_truncate_draw_path_over_64_waypoints(monkeypatch):
@@ -996,10 +997,11 @@ def test_planner_scales_named_target_bounds_to_resized_image(monkeypatch):
 
     context = json.loads(captured["payload"]["messages"][1]["content"])
     target = context["available_targets"][0]
-    assert context["screen_size"] == {"width": 1280, "height": 640}
+    assert context["screen_size"] == {"width": 448, "height": 224}
+    assert context["capture_size"] == {"width": 2000, "height": 1000}
     assert target["coordinate_space"] == "planner_image_pixels"
-    assert target["bounds"] == {"x": 640, "y": 320, "width": 128, "height": 64}
-    assert target["center"] == {"x": 704, "y": 352}
+    assert target["bounds"] == {"x": 224, "y": 112, "width": 45, "height": 22}
+    assert target["center"] == {"x": 246, "y": 123}
 
 
 def test_planner_accepts_injected_target_detector():

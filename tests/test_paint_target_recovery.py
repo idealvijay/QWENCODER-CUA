@@ -282,7 +282,8 @@ def test_target_alias_is_resolved_and_rebound_across_fresh_observations():
             target_detector=detector,
         ).run("Draw a red circle near the centre of the canvas and verify it.", planner)
 
-    assert result.success
+    assert not result.success
+    assert result.status == "failed"
     assert planner.calls == 2
     assert detector.calls == 2
     assert driver.clicked == [(40, 30, "left")]

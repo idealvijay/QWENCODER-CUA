@@ -285,10 +285,11 @@ def test_cua_backend_is_used_as_computer_driver_and_maps_window_tokens(monkeypat
         assert screenshot_path.exists()
 
         ellipse = computer.find_element(
-            ElementSelector(role="Button", name="Ellipse/Oval")
+            ElementSelector(role="button", name="Ellipse/Oval")
         )
         assert ellipse.id
         assert ellipse.name == "Ellipse/Oval"
+        assert ellipse.role == "button"
         assert ellipse.actions == ["click"]
 
         # The public QWENCODER element token resolves to the original Cua token.

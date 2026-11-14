@@ -181,11 +181,18 @@ class CuaDriverBackend(BaseDriver):
             and bool(window.is_on_screen)
             and not bool(window.minimized)
         ]
-        active_window_id = (
-            int(active_candidates[0].window_id)
-            if len(active_candidates) == 1
-            else None
-        )
+        active_window_id = None
+        if len(active_candidates) == 1:
+            active_window_id = int(active_candidates[0].window_id)
+        elif active_candidates and all(
+            getattr(window, "z_index", None) is not None
+            for window in active_candidates
+        ):
+            # Cua Driver documents higher z_index values as closer to the front.
+            # Never use array order to break a tie.
+            frontmost = max(active_candidates, key=lambda window: int(window.z_index))
+            if sum(int(window.z_index) == int(frontmost.z_index) for window in active_candidates) == 1:
+                active_window_id = int(frontmost.window_id)
 
         result: list[WindowInfo] = []
         for window in raw_windows:
@@ -304,12 +311,24 @@ class CuaDriverBackend(BaseDriver):
             screen_bounds = window.bounds
         else:
             raise UnsupportedOperationError("Cua Driver did not return target-window bounds.")
-        if image.size != (screen_bounds[2], screen_bounds[3]):
+        # On Windows, window_bounds describes the outer HWND while the
+        # screenshot is the client/content frame. Cua Driver's fixtures show
+        # a small border inset (commonly 1px); derive the screenshot origin and
+        # return the actual image dimensions to Computer's coordinate mapper.
+        inset_x = screen_bounds[2] - image.width
+        inset_y = screen_bounds[3] - image.height
+        if inset_x < 0 or inset_y < 0 or inset_x > 32 or inset_y > 64:
             raise UnsupportedOperationError(
-                "Cua Driver screenshot size does not match the reported window bounds: "
-                f"image={image.size}, bounds={screen_bounds[2:]}."
+                "Cua Driver screenshot dimensions are inconsistent with the target window: "
+                f"image={image.size}, outer_bounds={screen_bounds[2:]}."
             )
-        return image, screen_bounds
+        screen_origin = (
+            screen_bounds[0] + inset_x // 2,
+            screen_bounds[1] + inset_y // 2,
+            image.width,
+            image.height,
+        )
+        return image, screen_origin
 
     def create_accessibility_provider(self):
         from qwencoder_cua.drivers.cua.accessibility import CuaAccessibilityProvider
@@ -347,10 +366,15 @@ class CuaDriverBackend(BaseDriver):
                 )
             parent = by_index.get(item.parent_index) if item.parent_index is not None else None
             token = getattr(item, "element_token", None)
-            actions = [
-                action for action in (getattr(item, "actions", None) or [])
-                if action in {"click", "set_value"}
-            ] if token else []
+            raw_actions = set(getattr(item, "actions", None) or [])
+            actions = []
+            if token and raw_actions.intersection({"invoke", "click", "select", "toggle"}):
+                # Cua Driver uses Windows UIA's native "invoke"/"select"/"toggle"
+                # vocabulary. QWENCODER's neutral action is "click"; the provider
+                # retains the Cua element token and delegates to its UIA action route.
+                actions.append("click")
+            if token and "set_value" in raw_actions:
+                actions.append("set_value")
             normalized.append(UIElement(
                 id=token or f"cua-index:{item.element_index}",
                 role=item.role or "unknown",

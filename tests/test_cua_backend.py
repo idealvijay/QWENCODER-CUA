@@ -283,6 +283,8 @@ def test_cua_backend_is_used_as_computer_driver_and_maps_window_tokens(monkeypat
         assert observation.screenshot.coordinate_space == "window"
         assert (observation.screenshot.width, observation.screenshot.height) == (96, 64)
         assert screenshot_path.exists()
+        assert observation.accessibility_available, observation.notes
+        assert len(observation.elements) == 1, observation.notes
 
         ellipse = computer.find_element(
             ElementSelector(role="button", name="Ellipse/Oval")
@@ -312,7 +314,7 @@ def test_cua_backend_uses_snapshot_local_coordinate_origin(monkeypatch):
     ) as computer:
         observation = computer.observe()
         ellipse = computer.find_element(
-            ElementSelector(role="Button", name="Ellipse/Oval")
+            ElementSelector(role="button", name="Ellipse/Oval")
         )
 
         # The SDK reported screen-space frame (110, 220), while the captured

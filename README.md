@@ -123,7 +123,7 @@ A JSON response listing models means Ollama is reachable. The Ollama Windows app
 
 > **CMD and PowerShell use different syntax:** in CMD use `set "NAME=value"`; in PowerShell use `$env:NAME = "value"`. Do not mix the two.
 
-The planner is hard-capped at `20480` tokens through Ollama's `options.num_ctx`; an older terminal environment setting above 20,480 is capped automatically. `QWENCODER_CUA_NUM_CTX` can be used to request a smaller context, but cannot increase the 20K ceiling. To reduce vision memory and image-token use, MiniCPM receives an aspect-preserving screenshot copy no larger than `640x400`. QWENCODER retains the original full-resolution capture for target detection and before/after verification, and maps every model-image coordinate back to those original pixels (including the selected window's screen origin). Accessibility elements, named targets and history are also bounded/compacted before sending the request.
+The planner is hard-capped at `20480` tokens through Ollama's `options.num_ctx`; an older terminal environment setting above 20,480 is capped automatically. `QWENCODER_CUA_NUM_CTX` can be used to request a smaller context, but cannot increase the 20K ceiling. To reduce vision memory and image-token use, MiniCPM receives an aspect-preserving screenshot copy no larger than `640x400`. QWENCODER retains the original full-resolution capture for target detection and before/after verification, and maps every model-image coordinate back to those original pixels (including the selected window's screen origin). Accessibility elements, named targets and history are also bounded/compacted to a 24,000-character prompt-context budget before sending the request.
 
 ### 3. Run the diagnostic
 

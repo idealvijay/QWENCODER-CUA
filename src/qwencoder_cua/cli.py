@@ -156,15 +156,34 @@ def run_goal(
     goal: str = typer.Argument(...),
     model: str | None = typer.Option(None, "--model", help="Ollama model; defaults to MODEL or minicpm-v4.5:q4_0."),
     max_steps: int = typer.Option(12, min=1, max=30),
+    backend: str = typer.Option(
+        "native", "--backend", help="Execution backend: native (default) or cua (experimental)."
+    ),
     window_id: str | None = typer.Option(None, "--window-id", help="Target a specific ID shown by qwencoder-cua windows."),
     process_name: str | None = typer.Option(None, "--process-name", help="Target an exact process name, e.g. mspaint.exe."),
     window_title: str | None = typer.Option(None, "--window-title", help="Target a window whose title contains this text."),
 ):
     """Run an observe/plan/act/verify loop, optionally pinned to one application window."""
+    if backend not in {"native", "cua"}:
+        raise typer.BadParameter("backend must be 'native' or 'cua'.")
+
     planner = OllamaTaskPlanner(model=model)
     selector = _window_selector(window_id, process_name, window_title)
+    driver = None
+    if backend == "cua":
+        try:
+            from qwencoder_cua.drivers.cua.backend import CuaDriverBackend
+            driver = CuaDriverBackend()
+        except ImportError as exc:
+            raise typer.BadParameter(
+                'The Cua Driver backend requires pip install -e ".[windows,cua]".'
+            ) from exc
+        print(
+            "[yellow]Experimental backend:[/yellow] Cua Driver owns window capture, "
+            "UI Automation and native input."
+        )
     try:
-        with Computer(target_window=selector) as computer:
+        with Computer(driver=driver, target_window=selector) as computer:
             if selector is None:
                 automatic_selector = _auto_paint_window_selector(
                     goal, computer.windows(), computer.active_window()

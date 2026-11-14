@@ -265,8 +265,13 @@ class TaskRunner:
         message = attempt.message.casefold()
         return (
             not attempt.dispatched
-            and "target resolution failed" in message
-            and "not in the current observation" in message
+            and (
+                (
+                    "target resolution failed" in message
+                    and "not in the current observation" in message
+                )
+                or "could not re-identify" in message
+            )
         )
 
     def execute(

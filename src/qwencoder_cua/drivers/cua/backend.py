@@ -487,12 +487,29 @@ class CuaDriverBackend(BaseDriver):
 
     def scroll(self, dx: int = 0, dy: int = 0) -> None:
         self._require_connected()
+        if dx:
+            direction = (
+                self._sdk.ScrollDirection.RIGHT
+                if dx > 0 else self._sdk.ScrollDirection.LEFT
+            )
+            amount = abs(int(dx))
+        elif dy:
+            direction = (
+                self._sdk.ScrollDirection.UP
+                if dy > 0 else self._sdk.ScrollDirection.DOWN
+            )
+            amount = abs(int(dy))
+        else:
+            return
         request = self._sdk.ScrollInput(
-            delta_x=int(dx),
-            delta_y=int(dy),
+            x=0.0,
+            y=0.0,
+            direction=direction,
             target=self._target(),
             scope=None,
             session=None,
+            by=self._sdk.ScrollBy.LINE,
+            amount=amount,
         )
         self._check_result(self._call("scroll", request), "scroll")
 

@@ -7,6 +7,13 @@
 - Translate window-local and planner-image coordinates to desktop input coordinates using the current client-area origin.
 - Add CLI options for target-window runs and screenshots; keep full-desktop behavior as the default.
 
+## 0.7.0
+- Add local Ollama scene planning that returns schema-validated, normalized ScenePlan objects.
+- Add DrawingExecutor to turn ellipse, rectangle, line, polygon and path objects into bounded pointer strokes.
+- Re-detect the canvas and resolve normalized coordinates before every stroke; visually verify each stroke.
+- Split long paths into overlapping waypoint chunks while respecting TaskPolicy limits.
+- Add approval callbacks and an explicit style-applier hook; reject unsupported fills and opacity rather than silently ignoring them.
+- Reject duplicate scene object IDs and add platform-independent executor and scene-planner tests.
 
 ## 0.6.0
 - Add screenshot-scoped named UI targets with accessibility classification, confidence and bounds.

@@ -72,6 +72,13 @@ class ScenePlan(BaseModel):
     canvas_target_id: str = Field(min_length=1, max_length=160)
     objects: list[SceneObject] = Field(min_length=1, max_length=512)
 
+    @model_validator(mode="after")
+    def validate_unique_object_ids(self):
+        object_ids = [item.object_id for item in self.objects]
+        if len(object_ids) != len(set(object_ids)):
+            raise ValueError("scene object_id values must be unique")
+        return self
+
     @property
     def ordered_objects(self) -> list[SceneObject]:
         return sorted(self.objects, key=lambda item: item.z_index)

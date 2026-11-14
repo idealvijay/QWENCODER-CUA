@@ -208,10 +208,10 @@ class FakeSdk:
             cls.runtime = FakeRuntime()
             return cls.runtime
 
-    ListAppsInput = lambda: SimpleNamespace()
-    ListWindowsInput = lambda **kwargs: SimpleNamespace(**kwargs)
+    ListAppsInput = staticmethod(lambda: SimpleNamespace())
+    ListWindowsInput = staticmethod(lambda **kwargs: SimpleNamespace(**kwargs))
     GetWindowStateInput = FakeGetWindowStateInput
-    GetDesktopStateInput = lambda **kwargs: SimpleNamespace(**kwargs)
+    GetDesktopStateInput = staticmethod(lambda **kwargs: SimpleNamespace(**kwargs))
 
     class ActionTarget:
         WINDOW = FakeWindowTarget

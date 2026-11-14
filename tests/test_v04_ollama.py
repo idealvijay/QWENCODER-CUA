@@ -449,7 +449,7 @@ def test_planner_rejects_coordinates_still_out_of_range_after_retry(monkeypatch)
 
 
 def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
-    size = {"width": 1280, "height": 536}
+    size = {"width": 640, "height": 268}
     bad_click = TaskStep(
         action="click", x=6000, y=280,
         expected={"screen_changed": {"min_fraction": 0.001}},
@@ -468,7 +468,7 @@ def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
         expected={"screen_changed": {"min_fraction": 0.001}},
     )
     assert OllamaTaskPlanner._coordinate_errors(bad_path, size) == [
-        "Point 2 (1300, 20) is outside 0<=x<1280, 0<=y<536."
+        "Point 2 (1300, 20) is outside 0<=x<640, 0<=y<268."
     ]
 
 
@@ -995,10 +995,11 @@ def test_planner_scales_named_target_bounds_to_resized_image(monkeypatch):
 
     context = json.loads(captured["payload"]["messages"][1]["content"])
     target = context["available_targets"][0]
-    assert context["screen_size"] == {"width": 1280, "height": 640}
+    assert context["screen_size"] == {"width": 640, "height": 320}
+    assert context["capture_size"] == {"width": 2000, "height": 1000}
     assert target["coordinate_space"] == "planner_image_pixels"
-    assert target["bounds"] == {"x": 640, "y": 320, "width": 128, "height": 64}
-    assert target["center"] == {"x": 704, "y": 352}
+    assert target["bounds"] == {"x": 320, "y": 160, "width": 64, "height": 32}
+    assert target["center"] == {"x": 352, "y": 176}
 
 
 def test_planner_accepts_injected_target_detector():

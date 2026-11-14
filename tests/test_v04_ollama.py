@@ -39,8 +39,7 @@ def test_screenshot_is_resized_and_encoded(tmp_path):
     raw = base64.b64decode(images[0])
     assert raw.startswith(b"\xff\xd8")
     with Image.open(BytesIO(raw)) as resized:
-        assert resized.width <= 1280
-        assert resized.height <= 800
+        assert resized.size == (640, 384)
 
 
 def test_text_only_model_does_not_receive_image_payload():
@@ -384,8 +383,8 @@ def test_planner_retries_out_of_range_coordinates_once(monkeypatch):
         "reason": "Click the ellipse tool inside the visible ribbon.",
         "step": {
             "action": "click",
-            "x": 800,
-            "y": 280,
+            "x": 400,
+            "y": 140,
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
     }
@@ -411,7 +410,7 @@ def test_planner_retries_out_of_range_coordinates_once(monkeypatch):
 
     assert result.step is not None
     assert result.step.action == "click"
-    assert result.step.x == 800
+    assert result.step.x == 400
     assert len(requests) == 2
     correction = requests[1]["messages"][-1]["content"]
     assert "Planner image dimensions" in correction

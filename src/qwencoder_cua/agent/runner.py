@@ -63,6 +63,8 @@ class TaskRunner:
         max_stale_target_replans = 1
         freehand_fallbacks = 0
         max_freehand_fallbacks = 1
+        premature_success_replans = 0
+        max_premature_success_replans = 1
 
         for index in range(1, self.policy.max_steps + 2):
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
@@ -80,6 +82,44 @@ class TaskRunner:
                 Path(screenshot_path).unlink(missing_ok=True)
 
             if decision.done:
+                if (
+                    decision.success
+                    and self._is_paint_drawing_task(goal, observation)
+                    and not any(
+                        item.verified and item.action in {"draw_path", "drag"}
+                        for item in history
+                    )
+                ):
+                    premature_success_replans += 1
+                    guard = TaskStepResult(
+                        step_id=uuid4().hex[:12],
+                        action="task_completion_guard",
+                        dispatched=False,
+                        verified=False,
+                        message=(
+                            "DRAWING NOT COMPLETE: selecting Ellipse/Pencil, selecting red, "
+                            "or changing the toolbar is not the requested artwork. The current "
+                            "history contains no verified drag or draw_path. Inspect the latest "
+                            "canvas screenshot and draw the red circle before reporting success. "
+                            + (
+                                "ELLIPSE FALLBACK REQUIRED: use Pencil/Pen or Brush and a "
+                                "smooth closed draw_path; do not retry Ellipse."
+                                if freehand_fallbacks else
+                                "Use the built-in Ellipse with a drag, or use Pencil/Pen with "
+                                "a smooth closed draw_path if Ellipse selection fails."
+                            )
+                        ),
+                        before_observation_id=observation.observation_id,
+                    )
+                    history.append(guard)
+                    if premature_success_replans <= max_premature_success_replans:
+                        continue
+                    return self._run_result(
+                        run_id, goal, False, "failed", history,
+                        "Planner reported success before a verified drawing gesture existed.",
+                        started,
+                    )
+
                 return self._run_result(
                     run_id, goal, decision.success,
                     "completed" if decision.success else "failed", history,

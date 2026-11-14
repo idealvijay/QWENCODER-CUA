@@ -1,5 +1,13 @@
 # Changelog
 
+## Unreleased
+- Add process/title/handle-based target-window binding for Windows task runs.
+- Capture the selected window client area and its UI Automation tree instead of the entire desktop.
+- Re-resolve and refocus the target before every observation, including after the native window handle changes.
+- Translate window-local and planner-image coordinates to desktop input coordinates using the current client-area origin.
+- Add CLI options for target-window runs and screenshots; keep full-desktop behavior as the default.
+
+
 ## 0.6.0
 - Add screenshot-scoped named UI targets with accessibility classification, confidence and bounds.
 - Add target registry freshness checks and named `click_target` planning/execution with pre-dispatch re-detection.

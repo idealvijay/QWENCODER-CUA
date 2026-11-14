@@ -45,6 +45,14 @@ class BaseDriver(ABC):
     def focus_window(self, window_id: str) -> None:
         raise NotImplementedError
 
+    def capture_window(
+        self, window_id: str, output: str | Path | None = None
+    ) -> tuple[Any, tuple[int, int, int, int]]:
+        """Capture a window client area and return image plus (screen_x, screen_y, width, height)."""
+        raise NotImplementedError(
+            f"Window-only screenshot capture is not supported by {self.name}."
+        )
+
     @abstractmethod
     def click(self, x: int, y: int, button: str = "left") -> None:
         raise NotImplementedError
@@ -54,16 +62,13 @@ class BaseDriver(ABC):
         raise NotImplementedError
 
     def mouse_down(self, x: int, y: int, button: str = "left") -> None:
-        """Move to a point and press a pointer button; platform drivers implement this."""
         raise NotImplementedError("Held mouse-button input is not supported by this driver.")
 
     def mouse_up(self, button: str = "left") -> None:
-        """Release a pointer button previously pressed with mouse_down()."""
         raise NotImplementedError("Held mouse-button input is not supported by this driver.")
 
     def drag(self, start_x: int, start_y: int, end_x: int, end_y: int,
              button: str = "left", duration_seconds: float = 0.5) -> None:
-        """Draw one straight, button-held pointer movement."""
         self.draw_path(
             [(start_x, start_y), (end_x, end_y)],
             button=button,
@@ -72,11 +77,7 @@ class BaseDriver(ABC):
 
     def draw_path(self, points: Sequence[tuple[int, int]], button: str = "left",
                   duration_seconds: float = 1.0) -> None:
-        """Draw a smooth polyline and always release the pointer button.
-
-        Coordinates are desktop screenshot pixels with a top-left origin. The path is
-        sampled at no more than six-pixel intervals and is capped at 4096 pointer events.
-        """
+        """Draw a smooth polyline and always release the pointer button."""
         if button not in {"left", "middle", "right"}:
             raise ValueError(f"Unsupported mouse button: {button}")
         if not 0.05 <= duration_seconds <= 10.0:
@@ -100,8 +101,6 @@ class BaseDriver(ABC):
         delay = duration_seconds / max(1, total_samples)
         pressed = False
         try:
-            # Best-effort release is attempted even if the backend partially presses
-            # the button and then raises.
             pressed = True
             self.mouse_down(*normalized[0], button=button)
             for start, end, count in segments:

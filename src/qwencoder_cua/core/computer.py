@@ -6,6 +6,9 @@ from uuid import uuid4
 
 from qwencoder_cua.core.registry import create_driver
 from qwencoder_cua.models.observation import Observation, ScreenshotRef
+from qwencoder_cua.models.element import UIElement
+from qwencoder_cua.models.geometry import Rect
+from qwencoder_cua.models.window import WindowInfo, WindowSelector
 from qwencoder_cua.accessibility.tokens import ElementTokenStore
 from qwencoder_cua.core.exceptions import UnsupportedOperationError
 from qwencoder_cua.core.selector import select_unique
@@ -17,7 +20,10 @@ from qwencoder_cua.execution.verifier import verify_observation
 class Computer:
     """Local desktop facade: visual controls plus optional accessibility semantics."""
 
-    def __init__(self, driver=None, accessibility=True, element_ttl=15.0):
+    def __init__(
+        self, driver=None, accessibility=True, element_ttl=15.0,
+        target_window: WindowSelector | dict | None = None,
+    ):
         self.driver = driver or create_driver()
         self.session_id = str(uuid4())
         self._connected = False
@@ -25,6 +31,11 @@ class Computer:
         self._provider = None
         self._tokens = ElementTokenStore(element_ttl)
         self._last_observation_id = None
+        self._target_window_selector = (
+            WindowSelector.model_validate(target_window) if target_window is not None else None
+        )
+        self._target_window_identity: WindowInfo | None = None
+        self._last_target_window: WindowInfo | None = None
 
     def connect(self):
         if not self._connected:
@@ -53,6 +64,19 @@ class Computer:
             self._connected = False
         self._tokens.reset(str(uuid4()), [])
         self._last_observation_id = None
+        self._target_window_identity = None
+        self._last_target_window = None
+
+    @property
+    def target_window(self) -> WindowInfo | None:
+        return self._last_target_window
+
+    def bind_target_window(self, selector: WindowSelector | dict) -> WindowInfo:
+        self._require_connected()
+        self._target_window_selector = WindowSelector.model_validate(selector)
+        self._target_window_identity = None
+        self._last_target_window = self._resolve_target_window()
+        return self._last_target_window
 
     def __enter__(self):
         return self.connect()
@@ -66,8 +90,38 @@ class Computer:
 
     def observe(self, screenshot_path: str | Path | None = None, include_elements=True, max_depth=12):
         self._require_connected()
-        image = self.driver.screenshot(screenshot_path)
-        active = self.driver.get_active_window()
+        target_window = None
+        origin_x = origin_y = 0
+        coordinate_space = "desktop"
+
+        if self._target_window_selector is not None:
+            target_window = self._resolve_target_window()
+            self.driver.focus_window(target_window.id)
+            active = self.driver.get_active_window()
+            if active is not None and active.id != target_window.id:
+                raise UnsupportedOperationError(
+                    "The selected target window could not be brought to the foreground. "
+                    "No input was sent. Click the target app once and retry."
+                )
+            capture_window = getattr(self.driver, "capture_window", None)
+            if not callable(capture_window):
+                raise UnsupportedOperationError(
+                    f"Target-window capture is not implemented for {self.driver.name}."
+                )
+            try:
+                image, capture_bounds = capture_window(target_window.id, screenshot_path)
+            except NotImplementedError as exc:
+                raise UnsupportedOperationError(str(exc)) from exc
+            origin_x, origin_y, capture_width, capture_height = capture_bounds
+            if image.size != (capture_width, capture_height):
+                raise UnsupportedOperationError(
+                    "Window capture dimensions did not match its reported client-area bounds."
+                )
+            coordinate_space = "window"
+        else:
+            image = self.driver.screenshot(screenshot_path)
+            active = self.driver.get_active_window()
+
         windows = self.driver.get_windows()
         width, height = image.size
         observation_id = str(uuid4())
@@ -76,32 +130,126 @@ class Computer:
         accessibility_available = False
         if include_elements and self._provider:
             try:
-                raw_elements = self._provider.enumerate(
-                    window_id=active.id if active and self.driver.name == "windows" else None,
-                    max_depth=max_depth,
+                element_window_id = (
+                    target_window.id if target_window is not None
+                    else active.id if active and self.driver.name == "windows"
+                    else None
                 )
+                raw_elements = self._provider.enumerate(
+                    window_id=element_window_id, max_depth=max_depth
+                )
+                if coordinate_space == "window":
+                    raw_elements = self._localize_elements(
+                        raw_elements, origin_x, origin_y, width, height
+                    )
                 accessibility_available = True
             except Exception as exc:
                 notes.append(f"Accessibility enumeration unavailable: {exc}")
         elif include_elements:
             notes.append("Accessibility provider unavailable; visual screenshot and input remain available.")
+
         # Even an empty/failed accessibility observation invalidates all previous element IDs.
         elements = self._tokens.reset(observation_id, raw_elements)
         self._last_observation_id = observation_id
+        if target_window is not None:
+            notes.append(
+                f"Captured target window {target_window.title!r}; pointer coordinates are "
+                "relative to its client-area screenshot."
+            )
         return Observation(
             observation_id=observation_id,
             platform=self.driver.name,
             session_type=getattr(self.driver, "session_type", None),
             active_window=active,
+            target_window=target_window,
             windows=windows,
             elements=elements,
             accessibility_available=accessibility_available,
             screenshot=ScreenshotRef(
                 path=str(screenshot_path) if screenshot_path else None,
-                width=width, height=height
+                width=width,
+                height=height,
+                origin_x=origin_x,
+                origin_y=origin_y,
+                coordinate_space=coordinate_space,
             ),
             notes=notes,
         )
+
+    @staticmethod
+    def _localize_elements(elements, origin_x, origin_y, image_width, image_height):
+        localized = []
+        for element in elements:
+            bounds = element.bounds
+            if bounds is None:
+                localized.append(element)
+                continue
+            left = max(0, bounds.x - origin_x)
+            top = max(0, bounds.y - origin_y)
+            right = min(image_width, bounds.x + bounds.width - origin_x)
+            bottom = min(image_height, bounds.y + bounds.height - origin_y)
+            if right <= left or bottom <= top:
+                continue
+            localized.append(element.model_copy(update={
+                "bounds": Rect(x=left, y=top, width=right - left, height=bottom - top)
+            }))
+        return localized
+
+    def _resolve_target_window(self) -> WindowInfo:
+        selector = self._target_window_selector
+        if selector is None:
+            raise RuntimeError("No target-window selector is configured.")
+        windows = self.driver.get_windows()
+        identity = self._target_window_identity
+
+        if identity is not None:
+            same_handle = [
+                item for item in windows
+                if item.id == identity.id
+                and (identity.process_id is None or item.process_id == identity.process_id)
+            ]
+            if len(same_handle) == 1:
+                self._last_target_window = same_handle[0]
+                return same_handle[0]
+            if identity.process_id is not None:
+                same_process = [
+                    item for item in windows
+                    if item.process_id == identity.process_id
+                    and (
+                        identity.process_name is None
+                        or (item.process_name or "").casefold() == identity.process_name.casefold()
+                    )
+                ]
+                if selector.title_contains:
+                    titled = [
+                        item for item in same_process
+                        if selector.title_contains.casefold() in item.title.casefold()
+                    ]
+                    if len(titled) == 1:
+                        same_process = titled
+                if len(same_process) == 1:
+                    self._target_window_identity = same_process[0]
+                    self._last_target_window = same_process[0]
+                    return same_process[0]
+
+        matches = [item for item in windows if selector.matches(item)]
+        if not matches:
+            raise UnsupportedOperationError(
+                "No window matches the target selector. Run qwencoder-cua windows "
+                "to inspect available windows."
+            )
+        if len(matches) > 1:
+            descriptions = [
+                f"{item.title!r} (id={item.id}, pid={item.process_id})"
+                for item in matches[:8]
+            ]
+            raise UnsupportedOperationError(
+                "Target window selector is ambiguous; specify a window ID or title. "
+                + "; ".join(descriptions)
+            )
+        self._target_window_identity = matches[0]
+        self._last_target_window = matches[0]
+        return matches[0]
 
     def windows(self):
         self._require_connected()

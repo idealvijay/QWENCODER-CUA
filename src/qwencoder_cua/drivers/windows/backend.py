@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import time
 from pathlib import Path
 
 from qwencoder_cua.core.driver import BaseDriver
@@ -46,6 +47,7 @@ class WindowsDriver(BaseDriver):
         self._win32api = win32api
         self._pyautogui = pyautogui
         self._user32 = ctypes.windll.user32
+        self._kernel32 = ctypes.windll.kernel32
         self._connected = True
 
     def disconnect(self):
@@ -69,6 +71,70 @@ class WindowsDriver(BaseDriver):
             image.save(output)
         return image
 
+    def capture_window(
+        self, window_id: str, output: str | Path | None = None
+    ):
+        """Capture the selected window's client area, excluding title bars and borders."""
+        self._check()
+        hwnd = int(window_id)
+        if not self._win32gui.IsWindow(hwnd):
+            raise UnsupportedOperationError(f"Target window handle {window_id!r} is no longer valid.")
+        if not self._win32gui.IsWindowVisible(hwnd):
+            raise UnsupportedOperationError(f"Target window {window_id!r} is not visible.")
+        try:
+            import mss
+            from PIL import Image
+
+            left, top, right, bottom = self._win32gui.GetClientRect(hwnd)
+            width, height = right - left, bottom - top
+            screen_left, screen_top = self._win32gui.ClientToScreen(hwnd, (0, 0))
+            if width <= 0 or height <= 0:
+                raise UnsupportedOperationError("Target window has an empty client area.")
+            region = {
+                "left": int(screen_left),
+                "top": int(screen_top),
+                "width": int(width),
+                "height": int(height),
+            }
+            with mss.mss() as sct:
+                shot = sct.grab(region)
+                image = Image.frombytes("RGB", shot.size, shot.rgb)
+            if output:
+                image.save(output)
+            return image, (
+                int(screen_left), int(screen_top), int(width), int(height)
+            )
+        except UnsupportedOperationError:
+            raise
+        except Exception as exc:
+            raise DriverUnavailableError(
+                f"Could not capture target window {window_id!r}: {exc}"
+            ) from exc
+
+    def _window_info(self, hwnd: int, active: bool = False) -> WindowInfo:
+        title = self._win32gui.GetWindowText(hwnd)
+        try:
+            _, pid = self._win32process.GetWindowThreadProcessId(hwnd)
+            import psutil
+            process_name = psutil.Process(pid).name()
+        except Exception:
+            pid, process_name = None, None
+        try:
+            left, top, right, bottom = self._win32gui.GetWindowRect(hwnd)
+            bounds = (left, top, right - left, bottom - top)
+        except Exception:
+            bounds = None
+        return WindowInfo(
+            id=str(hwnd),
+            title=title,
+            process_id=pid,
+            process_name=process_name,
+            visible=bool(self._win32gui.IsWindowVisible(hwnd)),
+            minimized=bool(self._win32gui.IsIconic(hwnd)),
+            bounds=bounds,
+            is_active=active,
+        )
+
     def get_windows(self):
         self._check()
         result = []
@@ -79,22 +145,11 @@ class WindowsDriver(BaseDriver):
             title = self._win32gui.GetWindowText(hwnd)
             if not title.strip():
                 return
-            try:
-                _, pid = self._win32process.GetWindowThreadProcessId(hwnd)
-                import psutil
-                process_name = psutil.Process(pid).name()
-            except Exception:
-                pid, process_name = None, None
-            try:
-                left, top, right, bottom = self._win32gui.GetWindowRect(hwnd)
-                bounds = (left, top, right - left, bottom - top)
-            except Exception:
-                bounds = None
-            result.append(WindowInfo(
-                id=str(hwnd), title=title, process_id=pid,
-                process_name=process_name, bounds=bounds,
-                is_active=hwnd == self._win32gui.GetForegroundWindow(),
-            ))
+            result.append(
+                self._window_info(
+                    hwnd, active=hwnd == self._win32gui.GetForegroundWindow()
+                )
+            )
 
         self._win32gui.EnumWindows(callback, None)
         return result
@@ -104,22 +159,7 @@ class WindowsDriver(BaseDriver):
         hwnd = self._win32gui.GetForegroundWindow()
         if not hwnd:
             return None
-        title = self._win32gui.GetWindowText(hwnd)
-        try:
-            _, pid = self._win32process.GetWindowThreadProcessId(hwnd)
-            import psutil
-            pname = psutil.Process(pid).name()
-        except Exception:
-            pid, pname = None, None
-        try:
-            l, t, r, b = self._win32gui.GetWindowRect(hwnd)
-            bounds = (l, t, r-l, b-t)
-        except Exception:
-            bounds = None
-        return WindowInfo(
-            id=str(hwnd), title=title, process_id=pid,
-            process_name=pname, bounds=bounds, is_active=True
-        )
+        return self._window_info(hwnd, active=True)
 
     def focus_window(self, window_id: str):
         self._check()
@@ -127,7 +167,31 @@ class WindowsDriver(BaseDriver):
         if not self._win32gui.IsWindow(hwnd):
             raise ValueError(f"Unknown window handle: {window_id}")
         self._win32gui.ShowWindow(hwnd, self._win32con.SW_RESTORE)
-        self._win32gui.SetForegroundWindow(hwnd)
+
+        target_thread, _ = self._win32process.GetWindowThreadProcessId(hwnd)
+        current_thread = self._kernel32.GetCurrentThreadId()
+        attached = False
+        try:
+            if target_thread != current_thread:
+                attached = bool(
+                    self._user32.AttachThreadInput(current_thread, target_thread, True)
+                )
+            self._win32gui.BringWindowToTop(hwnd)
+            self._user32.SetForegroundWindow(hwnd)
+            self._user32.SetFocus(hwnd)
+        finally:
+            if attached:
+                self._user32.AttachThreadInput(current_thread, target_thread, False)
+
+        deadline = time.monotonic() + 1.0
+        while time.monotonic() < deadline:
+            if self._win32gui.GetForegroundWindow() == hwnd:
+                return
+            time.sleep(0.025)
+        raise UnsupportedOperationError(
+            "Windows did not allow QWENCODER to focus the selected application window. "
+            "Click that application once, then rerun the task."
+        )
 
     def click(self, x: int, y: int, button="left"):
         self._check()

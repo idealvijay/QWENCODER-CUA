@@ -10,6 +10,7 @@ from qwencoder_cua import (
     Computer, OllamaTaskPlanner, TaskPlan, TaskPolicy, TaskRunner, __version__,
 )
 from qwencoder_cua.core.exceptions import CUAError
+from qwencoder_cua.models.window import WindowSelector
 
 app = typer.Typer(help="QWENCODER CUA local desktop automation")
 
@@ -27,10 +28,31 @@ def doctor():
     runpy.run_path(str(Path(__file__).resolve().parents[2] / "scripts" / "doctor.py"))
 
 
+def _window_selector(window_id, process_name, window_title):
+    if not any((window_id, process_name, window_title)):
+        return None
+    return WindowSelector(
+        window_id=window_id,
+        process_name=process_name,
+        title_contains=window_title,
+    )
+
+
 @app.command()
-def screenshot(output: str = typer.Option("desktop.png", "--output", "-o")):
-    with Computer() as computer:
-        computer.screenshot(output)
+def screenshot(
+    output: str = typer.Option("desktop.png", "--output", "-o"),
+    window_id: str | None = typer.Option(None, "--window-id", help="Capture this window handle."),
+    process_name: str | None = typer.Option(None, "--process-name", help="Bind to an exact process name, e.g. mspaint.exe."),
+    window_title: str | None = typer.Option(None, "--window-title", help="Bind to a window whose title contains this text."),
+):
+    selector = _window_selector(window_id, process_name, window_title)
+    with Computer(target_window=selector) as computer:
+        if selector is None:
+            computer.screenshot(output)
+        else:
+            observation = computer.observe(screenshot_path=output)
+            if not observation.screenshot or observation.screenshot.coordinate_space != "window":
+                raise CUAError("The backend did not return a target-window screenshot.")
     print(f"[green]Saved screenshot:[/green] {output}")
 
 
@@ -38,7 +60,12 @@ def screenshot(output: str = typer.Option("desktop.png", "--output", "-o")):
 def windows():
     with Computer(accessibility=False) as computer:
         for window in computer.windows():
-            print(f"{window.id}\t{window.title}")
+            active = " [ACTIVE]" if window.is_active else ""
+            minimized = " [MINIMIZED]" if window.minimized else ""
+            print(
+                f"{window.id}\tPID={window.process_id}\t"
+                f"{window.process_name or '?'}\t{window.title}{active}{minimized}"
+            )
 
 
 @app.command("inspect")
@@ -84,11 +111,15 @@ def run_goal(
     goal: str = typer.Argument(...),
     model: str | None = typer.Option(None, "--model", help="Ollama model; defaults to MODEL or minicpm-v4.5:q4_0."),
     max_steps: int = typer.Option(12, min=1, max=30),
+    window_id: str | None = typer.Option(None, "--window-id", help="Target a specific ID shown by qwencoder-cua windows."),
+    process_name: str | None = typer.Option(None, "--process-name", help="Target an exact process name, e.g. mspaint.exe."),
+    window_title: str | None = typer.Option(None, "--window-title", help="Target a window whose title contains this text."),
 ):
-    """Run an observe/plan/act/verify loop using the local Ollama server."""
+    """Run an observe/plan/act/verify loop, optionally pinned to one application window."""
     planner = OllamaTaskPlanner(model=model)
+    selector = _window_selector(window_id, process_name, window_title)
     try:
-        with Computer() as computer:
+        with Computer(target_window=selector) as computer:
             result = TaskRunner(computer, TaskPolicy(max_steps=max_steps)).run(
                 goal, planner, approve=_approval_prompt
             )

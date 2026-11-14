@@ -336,4 +336,6 @@ def test_iterative_runner_reobserves_after_ineffective_named_paint_target_click(
     assert not result.success
     assert planner.calls == 2
     assert len(driver.clicked) == 1
-    assert detector.observation_ids == [result.steps[0].before_observation_id]
+    assert len(detector.observation_ids) == 2
+    assert detector.observation_ids[1] == result.steps[0].before_observation_id
+    assert detector.observation_ids[0] != detector.observation_ids[1]

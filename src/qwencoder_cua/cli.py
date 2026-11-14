@@ -10,7 +10,7 @@ from qwencoder_cua import (
     Computer, OllamaTaskPlanner, TaskPlan, TaskPolicy, TaskRunner, __version__,
 )
 from qwencoder_cua.core.exceptions import CUAError
-from qwencoder_cua.models.window import WindowSelector
+from qwencoder_cua.models.window import WindowInfo, WindowSelector
 
 app = typer.Typer(help="QWENCODER CUA local desktop automation")
 
@@ -35,6 +35,51 @@ def _window_selector(window_id, process_name, window_title):
         window_id=window_id,
         process_name=process_name,
         title_contains=window_title,
+    )
+
+
+_DRAWING_GOAL_TERMS = (
+    "draw", "drawing", "sketch", "circle", "ellipse", "shape",
+    "canvas", "brush", "pencil", "paint",
+)
+
+
+def _auto_paint_window_selector(
+    goal: str,
+    windows: list[WindowInfo],
+    active_window: WindowInfo | None,
+) -> WindowSelector | None:
+    """Auto-bind Paint for drawing goals when an unambiguous visible Paint window exists."""
+    normalized_goal = goal.casefold()
+    if not any(term in normalized_goal for term in _DRAWING_GOAL_TERMS):
+        return None
+
+    paint_windows = [
+        window for window in windows
+        if (window.process_name or "").casefold() == "mspaint.exe"
+        and window.visible
+        and not window.minimized
+    ]
+    if not paint_windows:
+        return None
+
+    if len(paint_windows) == 1:
+        # Process identity survives a changed HWND during task execution.
+        return WindowSelector(process_name="mspaint.exe")
+
+    # Multiple Paint windows are common. Prefer the one already in the foreground,
+    # otherwise fail safely rather than guessing which document the user intended.
+    active_paint = next(
+        (window for window in paint_windows
+         if active_window is not None and window.id == active_window.id),
+        None,
+    )
+    if active_paint is not None:
+        return WindowSelector(window_id=active_paint.id)
+
+    raise CUAError(
+        "Multiple visible Microsoft Paint windows were found and none is active. "
+        "Focus the intended Paint window or specify --window-id."
     )
 
 
@@ -120,6 +165,16 @@ def run_goal(
     selector = _window_selector(window_id, process_name, window_title)
     try:
         with Computer(target_window=selector) as computer:
+            if selector is None:
+                automatic_selector = _auto_paint_window_selector(
+                    goal, computer.windows(), computer.active_window()
+                )
+                if automatic_selector is not None:
+                    selected = computer.bind_target_window(automatic_selector)
+                    print(
+                        f"[cyan]Automatically targeting Microsoft Paint:[/cyan] "
+                        f"{selected.title} (PID {selected.process_id})"
+                    )
             result = TaskRunner(computer, TaskPolicy(max_steps=max_steps)).run(
                 goal, planner, approve=_approval_prompt
             )

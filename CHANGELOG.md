@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Automatically target a single visible Microsoft Paint window for drawing/canvas goals; prefer the active Paint window when multiple are open, and retain explicit window-selection CLI options as overrides.
 - Validate every Paint red-circle `draw_path`, even when the planner skips Ellipse fallback; reject short, open, elongated or irregular paths before dispatch.
 - Verify newly added red pixels at original screenshot resolution so thin strokes are not missed by the 64x64 change-detection thumbnail; reject black or other incorrect-colour strokes.
 - Treat MiniCPM's terminal "switching to freehand" response as a bounded Ellipse-to-Pencil handoff instead of ending the Paint task.

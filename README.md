@@ -123,7 +123,7 @@ A JSON response listing models means Ollama is reachable. The Ollama Windows app
 
 > **CMD and PowerShell use different syntax:** in CMD use `set "NAME=value"`; in PowerShell use `$env:NAME = "value"`. Do not mix the two.
 
-The planner sends this context size to Ollama through `options.num_ctx`. The default is `20480` tokens so screenshot + UI context can exceed Ollama's 4096-token default. Override it with `QWENCODER_CUA_NUM_CTX` if needed. MiniCPM-V 4.5 Q4_0 is listed with a 40K context window; actual speed and memory use depend on your hardware and Ollama configuration.
+The planner is hard-capped at `20480` tokens through Ollama's `options.num_ctx`; an older terminal environment setting above 20,480 is capped automatically. `QWENCODER_CUA_NUM_CTX` can be used to request a smaller context, but cannot increase the 20K ceiling. To reduce vision memory and image-token use, MiniCPM receives an aspect-preserving screenshot copy no larger than `640x400`. QWENCODER retains the original full-resolution capture for target detection and before/after verification, and maps every model-image coordinate back to those original pixels (including the selected window's screen origin). Accessibility elements, named targets and history are also bounded/compacted before sending the request.
 
 ### 3. Run the diagnostic
 
@@ -297,7 +297,7 @@ The lower-level `Computer` methods are `move(x, y)`, `mouse_down(x, y, button)`,
 
 ### Local agent drawing actions
 
-The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. Planner-produced click and drawing coordinates are measured in the resized image shown to the vision model; the runner maps them to full desktop pixels before dispatch. A path contains 2–64 waypoints, and its duration is limited to 10 seconds. QWENCODER validates against the planner image dimensions. The direct Python `Computer` drawing API uses native desktop screenshot pixels. A path should use a `screen_changed` postcondition (for example, `{"screen_changed": {"min_fraction": 0.001}}`) so the runner checks whether the canvas visibly changed.
+The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. MiniCPM sees an aspect-preserving image copy no larger than `640x400`; its click and drawing coordinates are measured in those reduced-image pixels. The runner maps them to the original full-resolution screenshot pixels before dispatch, then applies the target-window origin when window mode is active. The original screenshot is retained for verification, so reducing model-image resolution does not reduce pointer precision. A path contains 2–64 waypoints, and its duration is limited to 10 seconds. QWENCODER validates against the planner image dimensions. The direct Python `Computer` drawing API uses native desktop screenshot pixels. A path should use a `screen_changed` postcondition (for example, `{"screen_changed": {"min_fraction": 0.001}}`) so the runner checks whether the canvas visibly changed.
 
 Example request after opening Paint, selecting a brush and colour, and placing Paint in the foreground:
 

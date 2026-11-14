@@ -1,4 +1,8 @@
+import base64
+import io
 import json
+
+from PIL import Image
 
 from qwencoder_cua.agent.ollama import OllamaTaskPlanner, SYSTEM_PROMPT
 from qwencoder_cua.models.observation import Observation, ScreenshotRef
@@ -64,5 +68,42 @@ def test_planner_context_distinguishes_target_window_from_foreground_terminal(mo
     assert context["capture_coordinate_space"] == "window"
     assert context["capture_origin"] == {"x": 300, "y": 200}
     assert context["desktop_size"] is None
-    assert context["screen_size"] == {"width": 1200, "height": 800}
+    assert context["screen_size"] == {"width": 600, "height": 400}
+    assert context["capture_size"] == {"width": 1200, "height": 800}
+    assert captured["payload"]["options"]["num_ctx"] == 20480
     assert "Treat it as authoritative" in SYSTEM_PROMPT
+    assert "capture_size" in SYSTEM_PROMPT
+
+
+
+def test_num_ctx_is_hard_capped_at_20480(monkeypatch):
+    monkeypatch.setenv("QWENCODER_CUA_NUM_CTX", "32768")
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    assert planner.num_ctx == 20480
+
+
+def test_vision_image_is_downsampled_but_original_capture_is_preserved(tmp_path):
+    screenshot_path = tmp_path / "paint-window.png"
+    original = Image.new("RGB", (1200, 800), "white")
+    original.save(screenshot_path)
+    observation = Observation(
+        observation_id="obs-image",
+        platform="windows",
+        screenshot=ScreenshotRef(
+            path=str(screenshot_path),
+            width=1200,
+            height=800,
+            origin_x=300,
+            origin_y=200,
+            coordinate_space="window",
+        ),
+    )
+
+    encoded = OllamaTaskPlanner._read_observation_image(observation)
+    assert len(encoded) == 1
+    model_image = Image.open(io.BytesIO(base64.b64decode(encoded[0])))
+    assert model_image.size == (600, 400)
+
+    # The on-disk original remains full resolution for verification and coordinate mapping.
+    with Image.open(screenshot_path) as retained_original:
+        assert retained_original.size == (1200, 800)

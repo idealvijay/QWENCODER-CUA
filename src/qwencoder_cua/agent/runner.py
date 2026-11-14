@@ -273,12 +273,21 @@ class TaskRunner:
                     and red_stroke_replans < max_red_stroke_replans
                 ):
                     red_stroke_replans += 1
+                    failure_message = step_result.steps[-1].message
+                    nonred_match = re.search(
+                        r"(\d+) changed non-red pixels", failure_message.casefold()
+                    )
+                    changed_nonred = int(nonred_match.group(1)) if nonred_match else 0
+                    correction = (
+                        "Undo the last wrong-colour stroke with Ctrl+Z, then select the red "
+                        "foreground swatch in Paint and redraw the smooth closed circle."
+                        if changed_nonred > 0 else
+                        "No visible stroke was detected. Select the red foreground swatch in "
+                        "Paint, then draw the smooth closed circle again."
+                    )
                     failed = step_result.steps[-1].model_copy(update={
                         "message": (
-                            f"{step_result.steps[-1].message} RED STROKE CORRECTION REQUIRED: "
-                            "The fallback stroke was not red. Undo that last stroke with Ctrl+Z, "
-                            "select the red foreground colour from the Paint palette, then draw "
-                            "the same smooth closed circle again with Pencil/Pen or Brush. "
+                            f"{failure_message} RED STROKE CORRECTION REQUIRED: {correction} "
                             "Do not claim success until new red pixels are visible on the canvas."
                         )
                     })

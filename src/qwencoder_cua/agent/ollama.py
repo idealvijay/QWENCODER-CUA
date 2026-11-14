@@ -179,8 +179,17 @@ coordinate click grounded in the NEW screenshot. The runner permits only one sta
 
 If any completed_steps message contains "ELLIPSE FALLBACK REQUIRED", this is a mandatory
 task-state transition. Never attempt Ellipse/Oval again. Select Pencil/Pen (or Brush if Pencil/Pen
-is unavailable), select red, then draw the closed freehand circle with draw_path. Do not finish
+is unavailable), select the RED foreground swatch (not black), then draw the closed freehand circle
+with draw_path. The runner checks path point count, closure, aspect ratio and circularity before
+dispatch; a rejected path must be replaced with a larger, evenly spaced circle. Do not finish
 until the screenshot visibly confirms the red circle on the canvas.
+
+If any completed_steps message contains "RED STROKE CORRECTION REQUIRED", the last stroke was not
+red. Undo only that last stroke with Ctrl+Z, select the red foreground colour, and repeat the
+validated closed draw_path. Keep the circle inside the drawable canvas.
+
+Keep the "reason" field to one short sentence (12 words or fewer). Return only one complete JSON
+object. Never leave JSON strings open or append commentary outside the object.
 
 A non-terminal response MUST use this exact structure (no wrapper keys):
 {"done": false, "success": true, "reason": "Why this one action is next.", "step": {
@@ -499,19 +508,28 @@ class OllamaTaskPlanner:
                             f"attempt. Planner image: {context.get('screen_size')}. {detail}"
                         )
                     return decision
-                except ValidationError as exc:
+                except (ValidationError, json.JSONDecodeError) as exc:
                     if attempt == 0:
+                        malformed_json = isinstance(exc, json.JSONDecodeError)
                         validation_detail = str(exc)[:1800]
                         previous_response = content[:3000]
+                        repair_intro = (
+                            "Your previous response was malformed JSON. Return a syntactically "
+                            "complete JSON object with every string properly quoted and escaped. "
+                            "Do not include markdown, code fences or commentary. Keep the reason "
+                            "field to one short sentence (12 words or fewer).\n"
+                            if malformed_json else
+                            "Your previous JSON was rejected by the TaskDecision / TaskStep schema. "
+                            "Correct it and return exactly one complete JSON object. "
+                            "Do not omit required fields and do not invent field names.\n"
+                        )
                         messages = [
                             *messages,
                             {"role": "assistant", "content": content},
                             {
                                 "role": "user",
                                 "content": (
-                                    "Your previous JSON was rejected by the TaskDecision / TaskStep "
-                                    "schema. Correct it and return exactly one complete JSON object. "
-                                    "Do not omit required fields and do not invent field names.\n"
+                                    repair_intro
                                     "For a non-terminal action, the top-level decision must have "
                                     "\"done\": false and \"step\" must be an object containing "
                                     "a required \"action\" field and a required non-empty "

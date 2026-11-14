@@ -23,7 +23,10 @@ def _verify_screen_changed(previous_path: str | None, current_path: str | None,
     except (OSError, ValueError) as exc:
         return False, f"Could not compare screenshots: {exc}"
     ok = fraction >= min_fraction
-    return ok, f"Changed pixels: {fraction:.1%} (required {min_fraction:.1%})."
+    return ok, (
+        f"Changed pixels: {fraction:.1%} ({changed}/4096 samples; "
+        f"required {min_fraction:.1%})."
+    )
 
 
 def verify_observation(observation: Observation, expectation: dict,

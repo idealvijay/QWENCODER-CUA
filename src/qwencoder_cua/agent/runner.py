@@ -1,15 +1,15 @@
 from __future__ import annotations
 
 import os
+import re
 import tempfile
 import time
 from dataclasses import replace
 from datetime import datetime, timezone
+from math import hypot
 from pathlib import Path
 from typing import Callable, Literal, Protocol
 from uuid import uuid4
-import re
-from math import hypot
 
 from qwencoder_cua.agent.plan import (
     TaskDecision, TaskPlan, TaskRunResult, TaskStep, TaskStepResult,
@@ -125,6 +125,12 @@ class TaskRunner:
                         "Planner target was not present or was ambiguous.", started,
                     )
 
+            step_to_execute = decision.step
+            if target_hint is not None:
+                step_to_execute = self._tune_target_selection_postcondition(
+                    decision.step, target_hint
+                )
+
             # One-step execution inherits the remaining global time budget.
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
             if remaining <= 0:
@@ -134,7 +140,7 @@ class TaskRunner:
             step_runner = TaskRunner(
                 self.computer, step_policy, target_detector=self.target_detector
             )
-            step_plan = TaskPlan(goal=goal, steps=[decision.step])
+            step_plan = TaskPlan(goal=goal, steps=[step_to_execute])
             wrapped_approval = None
             if approve is not None:
                 wrapped_approval = lambda step, _local_index: approve(step, index)
@@ -426,6 +432,39 @@ class TaskRunner:
             "All steps completed and verified." if all_verified
             else "One or more steps were not verified.", started,
         )
+
+    @staticmethod
+    def _tune_target_selection_postcondition(
+        step: TaskStep, target_hint: UITarget
+    ) -> TaskStep:
+        """Use a small, quantization-aware threshold for tiny toolbar selection changes.
+
+        Paint shape/tool/color buttons often change only a small highlight. The verifier
+        compares 64x64 thumbnails (4096 samples), so 4 changed samples equal 0.0977%:
+        visibly rounded to 0.1%, but just below the 0.1% threshold. Lower only the
+        planner's standard 0.1% threshold for semantic selection clicks; keep drawing
+        strokes, drags, canvas actions and stricter custom thresholds unchanged.
+        """
+        if target_hint.kind not in {"shape", "tool", "color"}:
+            return step
+        if step.action != "click_target":
+            return step
+        config = step.expected.get("screen_changed")
+        if not isinstance(config, dict):
+            return step
+        try:
+            threshold = float(config.get("min_fraction", 0.01))
+        except (TypeError, ValueError):
+            return step
+        if abs(threshold - 0.001) > 1e-12:
+            return step
+
+        expected = dict(step.expected)
+        expected["screen_changed"] = {
+            **config,
+            "min_fraction": 0.0005,
+        }
+        return step.model_copy(update={"expected": expected})
 
     @staticmethod
     def _target_id_alias_tokens(target_id: str) -> set[str]:

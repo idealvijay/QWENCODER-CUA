@@ -4,7 +4,6 @@ import asyncio
 import base64
 import importlib
 import io
-import os
 import threading
 from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path, PureWindowsPath
@@ -476,7 +475,7 @@ class CuaDriverBackend(BaseDriver):
             from_y=float(start_y),
             to_x=float(end_x),
             to_y=float(end_y),
-            target=self._target() if self._selected_window is not None else None,
+            target=self._target(),
             scope=None,
             session=None,
             duration_ms=round(duration_seconds * 1000),

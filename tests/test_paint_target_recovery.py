@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw
 from qwencoder_cua.agent import TaskDecision, TaskPolicy, TaskRunner, TaskStep
 from qwencoder_cua.core.computer import Computer
 from qwencoder_cua.models.capabilities import DriverCapabilities
-from qwencoder_cua.models.geometry import Rect
+from qwencoder_cua.models.geometry import Point, Rect
 from qwencoder_cua.models.target import UITarget
 from qwencoder_cua.models.window import WindowInfo
 from qwencoder_cua.perception.target_registry import TargetRegistry

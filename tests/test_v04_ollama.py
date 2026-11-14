@@ -1017,3 +1017,46 @@ def test_planner_accepts_injected_target_detector():
         model="minicpm-v4.5:q4_0", target_detector=detector
     )
     assert planner.target_detector is detector
+
+
+
+def test_planner_repairs_malformed_json_response_once(monkeypatch):
+    malformed = '{"done":false,"success":true,"reason":"Select the red colour'
+    corrected = {
+        "done": False,
+        "success": True,
+        "reason": "Select the red swatch.",
+        "step": {
+            "action": "click",
+            "x": 120,
+            "y": 60,
+            "expected": {"screen_changed": {"min_fraction": 0.001}},
+        },
+    }
+    responses = [
+        FakeOllamaResponse({"message": {"content": malformed}}),
+        FakeOllamaResponse({"message": {"content": json.dumps(corrected)}}),
+    ]
+    requests = []
+
+    def fake_urlopen(request, timeout):
+        requests.append(json.loads(request.data.decode("utf-8")))
+        return responses.pop(0)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
+    observation = Observation(observation_id="obs", platform="windows")
+
+    result = planner.plan_next("Draw a red circle in Paint.", observation, [])
+
+    assert result.step is not None
+    assert result.step.action == "click"
+    assert len(requests) == 2
+    correction = next(
+        item["content"]
+        for item in requests[1]["messages"]
+        if item["role"] == "user"
+        and "malformed JSON" in item["content"]
+    )
+    assert "12 words or fewer" in correction
+    assert "previous invalid response" in correction

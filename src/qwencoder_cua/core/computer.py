@@ -43,7 +43,10 @@ class Computer:
             self._connected = True
             if self._accessibility_enabled:
                 try:
-                    if self.driver.name == "windows":
+                    provider_factory = getattr(self.driver, "create_accessibility_provider", None)
+                    if callable(provider_factory):
+                        self._provider = provider_factory()
+                    elif self.driver.name == "windows":
                         from qwencoder_cua.drivers.windows.accessibility import WindowsUIAProvider
                         self._provider = WindowsUIAProvider()
                     elif self.driver.name == "linux":
@@ -96,13 +99,16 @@ class Computer:
 
         if self._target_window_selector is not None:
             target_window = self._resolve_target_window()
-            self.driver.focus_window(target_window.id)
-            active = self.driver.get_active_window()
-            if active is not None and active.id != target_window.id:
-                raise UnsupportedOperationError(
-                    "The selected target window could not be brought to the foreground. "
-                    "No input was sent. Click the target app once and retry."
-                )
+            if not getattr(self.driver, "background_window_capture", False):
+                self.driver.focus_window(target_window.id)
+                active = self.driver.get_active_window()
+                if active is not None and active.id != target_window.id:
+                    raise UnsupportedOperationError(
+                        "The selected target window could not be brought to the foreground. "
+                        "No input was sent. Click the target app once and retry."
+                    )
+            else:
+                active = self.driver.get_active_window()
             capture_window = getattr(self.driver, "capture_window", None)
             if not callable(capture_window):
                 raise UnsupportedOperationError(

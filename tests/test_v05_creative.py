@@ -273,7 +273,9 @@ def test_drawing_prompt_trusts_user_blank_canvas_statement():
     normalized = " ".join(SYSTEM_PROMPT.split())
     assert "user's statement that the canvas is blank is reliable" in normalized
     assert "specific visible marks inside the canvas itself" in normalized
-    assert "strongly prefer the built-in Ellipse/Oval shape" in normalized
+    assert "first try the built-in Ellipse/Oval shape" in normalized
+    assert "ELLIPSE FALLBACK REQUIRED" in normalized
+    assert "then use one drag for the circle's bounding box" in normalized
     assert "then use one drag for the circle's bounding box" in normalized
 
 

@@ -303,3 +303,80 @@ def test_ambiguous_target_alias_is_rejected_without_clicking():
             runner._resolve_planned_target_hint(step, observation)
 
     assert driver.clicked == []
+
+
+
+def test_tiny_shape_tool_highlight_passes_target_selection_verification():
+    class TinyHighlightDriver(PaintDriver):
+        def screenshot(self, output=None):
+            image = Image.new("RGB", (64, 64), "black")
+            if self.drawing_visible:
+                pixels = image.load()
+                # Exactly four samples change in the verifier's 64x64 comparison.
+                for point in ((10, 10), (11, 10), (10, 11), (11, 11)):
+                    pixels[point] = (255, 255, 255)
+            if output:
+                image.save(output)
+            return image
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                return TaskDecision(step=TaskStep(
+                    action="click_target",
+                    target_id="paint.shape.ellipse",
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+            assert len(history) == 1
+            assert history[0].dispatched and history[0].verified
+            assert "4/4096 samples" in history[0].message
+            return TaskDecision(done=True, success=True, reason="Ellipse tool selected.")
+
+    driver = TinyHighlightDriver()
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(
+            computer,
+            TaskPolicy(max_steps=3),
+            target_detector=EllipseTargetDetector(),
+        ).run("Draw a red circle near the centre of the canvas and verify it.", planner)
+
+    assert result.success
+    assert planner.calls == 2
+    assert driver.clicked == [(40, 30, "left")]
+    assert len(result.steps) == 1
+    assert result.steps[0].dispatched and result.steps[0].verified
+    assert "0.1%" in result.steps[0].message
+    assert "required 0.1%" in result.steps[0].message
+
+
+def test_small_target_threshold_tuning_does_not_change_draw_or_strict_checks():
+    target = UITarget(
+        target_id="paint.shape.ellipse",
+        label="Ellipse",
+        kind="shape",
+        bounds=Rect(x=20, y=20, width=40, height=20),
+        observation_id="observation",
+        source="accessibility",
+    )
+    selection_step = TaskStep(
+        action="click_target",
+        target_id="paint.shape.ellipse",
+        expected={"screen_changed": {"min_fraction": 0.001}},
+    )
+    tuned = TaskRunner._tune_target_selection_postcondition(selection_step, target)
+    assert tuned.expected["screen_changed"]["min_fraction"] == 0.0005
+
+    strict_step = selection_step.model_copy(update={
+        "expected": {"screen_changed": {"min_fraction": 0.01}}
+    })
+    strict = TaskRunner._tune_target_selection_postcondition(strict_step, target)
+    assert strict.expected["screen_changed"]["min_fraction"] == 0.01
+
+    color_target = target.model_copy(update={"kind": "canvas"})
+    unchanged = TaskRunner._tune_target_selection_postcondition(selection_step, color_target)
+    assert unchanged.expected["screen_changed"]["min_fraction"] == 0.001

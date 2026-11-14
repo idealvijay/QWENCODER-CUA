@@ -144,11 +144,19 @@ def test_paint_target_alias_resolves_to_unique_current_target():
                     target_id="paint.tool.ellipse",
                     expected={"active_window_title_contains": "Paint"},
                 ))
-            assert len(history) == 1
-            assert history[0].dispatched and history[0].verified
+            if self.calls == 2:
+                assert len(history) == 1
+                assert history[0].dispatched and history[0].verified
+                # Deliberately simulate a vision model that declares success too early.
+                return TaskDecision(
+                    done=True, success=True, reason="Ellipse tool selected."
+                )
+            assert self.calls == 3
+            assert history[-1].action == "task_completion_guard"
+            assert not history[-1].verified
             return TaskDecision(
                 done=True, success=False,
-                reason="Ellipse selection worked, but the circle has not been drawn yet.",
+                reason="The drawing gesture is still missing.",
             )
 
     driver = PaintDriver()
@@ -162,11 +170,12 @@ def test_paint_target_alias_resolves_to_unique_current_target():
 
     assert not result.success
     assert result.status == "failed"
-    assert planner.calls == 2
+    assert planner.calls == 3
     assert driver.clicked == [(40, 30, "left")]
-    assert len(result.steps) == 1
-    assert result.steps[0].dispatched
-    assert result.steps[0].verified
+    assert len(result.steps) == 2
+    assert result.steps[0].dispatched and result.steps[0].verified
+    assert result.steps[1].action == "task_completion_guard"
+    assert not result.steps[1].verified
 
 
 def test_paint_stale_target_recovery_is_bounded_to_one_retry():

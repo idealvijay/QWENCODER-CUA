@@ -1,6 +1,8 @@
 # Changelog
 
 ## Unreleased
+- Validate every Paint red-circle `draw_path`, even when the planner skips Ellipse fallback; reject short, open, elongated or irregular paths before dispatch.
+- Verify newly added red pixels at original screenshot resolution so thin strokes are not missed by the 64x64 change-detection thumbnail; reject black or other incorrect-colour strokes.
 - Treat MiniCPM's terminal "switching to freehand" response as a bounded Ellipse-to-Pencil handoff instead of ending the Paint task.
 - Repair one malformed JSON planner response with a concise schema reminder; fail with a useful error if the second response is still invalid.
 - Validate fallback circle geometry before dispatch (waypoint count, minimum size, circularity, aspect ratio and closure), lower only the fallback stroke's thumbnail change threshold, and require new red pixels in the actual stroke region.

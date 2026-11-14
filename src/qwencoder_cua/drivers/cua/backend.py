@@ -4,6 +4,7 @@ import asyncio
 import base64
 import importlib
 import io
+import re
 import threading
 from concurrent.futures import TimeoutError as FutureTimeout
 from pathlib import Path, PureWindowsPath

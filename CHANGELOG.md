@@ -1,6 +1,9 @@
 # Changelog
 
 ## Unreleased
+- Treat MiniCPM's terminal "switching to freehand" response as a bounded Ellipse-to-Pencil handoff instead of ending the Paint task.
+- Repair one malformed JSON planner response with a concise schema reminder; fail with a useful error if the second response is still invalid.
+- Validate fallback circle geometry before dispatch (waypoint count, minimum size, circularity, aspect ratio and closure), lower only the fallback stroke's thumbnail change threshold, and require new red pixels in the actual stroke region.
 - Fall back from failed Paint Ellipse/Oval selection to Pencil/Pen (or Brush) and a closed freehand circle path; require a verified drawing gesture before a Paint drawing task can report success.
 - Hard-cap Ollama planner context at exactly 20,000 tokens and bound generated responses to 1,024 tokens; larger legacy environment values are clamped.
 - Downsample screenshots sent to vision models to an aspect-preserving maximum edge of 448 pixels while retaining original captures for verification.

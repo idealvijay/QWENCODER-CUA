@@ -384,3 +384,175 @@ def test_small_target_threshold_tuning_does_not_change_draw_or_strict_checks():
     color_target = target.model_copy(update={"kind": "canvas"})
     unchanged = TaskRunner._tune_target_selection_postcondition(selection_step, color_target)
     assert unchanged.expected["screen_changed"]["min_fraction"] == 0.001
+
+
+
+class FreehandFallbackPaintDriver(PaintDriver):
+    def __init__(self):
+        super().__init__()
+        self.pen_selected = False
+        self.mouse_is_down = False
+        self.stroke_points = []
+
+    def click(self, x, y, button="left"):
+        self.clicked.append((x, y, button))
+        if (x, y) == (5, 5):
+            self.pen_selected = True
+
+    def mouse_down(self, x, y, button="left"):
+        self.mouse_is_down = True
+        self.stroke_points = [(x, y)]
+
+    def move(self, x, y):
+        if self.mouse_is_down:
+            self.stroke_points.append((x, y))
+
+    def mouse_up(self, button="left"):
+        self.mouse_is_down = False
+        if self.stroke_points:
+            self.stroke_points.append(self.stroke_points[0])
+
+    def screenshot(self, output=None):
+        image = Image.new("RGB", (100, 80), "black")
+        draw = ImageDraw.Draw(image)
+        if self.pen_selected:
+            # Small toolbar highlight showing the Pencil tool was selected.
+            for point in ((5, 5), (6, 5), (5, 6), (6, 6)):
+                image.putpixel(point, (255, 255, 255))
+        if len(self.stroke_points) >= 2:
+            draw.line(self.stroke_points, fill=(255, 0, 0), width=2)
+        if output:
+            image.save(output)
+        return image
+
+
+def test_paint_ellipse_failure_falls_back_to_pen_and_verifies_red_circle():
+    from qwencoder_cua.models.selector import ElementSelector
+    from qwencoder_cua.models.geometry import Point
+
+    driver = FreehandFallbackPaintDriver()
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                return TaskDecision(step=TaskStep(
+                    action="click_element",
+                    selector=ElementSelector(role="button", name="Ellipse"),
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+
+            if self.calls == 2:
+                assert len(history) == 1
+                assert not history[0].dispatched
+                assert "ELLIPSE FALLBACK REQUIRED" in history[0].message
+                assert "Do not try Ellipse/Oval again" in history[0].message
+                # The planner now chooses the visible Pencil/Pen tool using the
+                # screenshot rather than retrying the failed Ellipse selector.
+                return TaskDecision(step=TaskStep(
+                    action="click",
+                    x=5,
+                    y=5,
+                    expected={"screen_changed": {"min_fraction": 0.0005}},
+                ))
+
+            if self.calls == 3:
+                assert len(history) == 2
+                assert history[1].action == "click"
+                assert history[1].dispatched and history[1].verified
+                assert driver.pen_selected
+                # A smooth closed loop in planner-image coordinates, centred on
+                # the 100x80 drawable canvas.
+                points = [
+                    Point(x=65, y=40),
+                    Point(x=61, y=49),
+                    Point(x=54, y=55),
+                    Point(x=45, y=55),
+                    Point(x=38, y=49),
+                    Point(x=35, y=40),
+                    Point(x=38, y=31),
+                    Point(x=45, y=25),
+                    Point(x=54, y=25),
+                    Point(x=61, y=31),
+                    Point(x=65, y=40),
+                ]
+                return TaskDecision(step=TaskStep(
+                    action="draw_path",
+                    points=points,
+                    duration_seconds=0.4,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+
+            assert len(history) == 3
+            assert history[2].action == "draw_path"
+            assert history[2].dispatched and history[2].verified
+            # Verify that the new observation contains red pixels on the canvas,
+            # rather than accepting the toolbar highlight as task completion.
+            with Image.open(observation.screenshot.path) as screenshot:
+                red_pixels = sum(
+                    1 for pixel in screenshot.convert("RGB").getdata()
+                    if pixel[0] > 180 and pixel[1] < 80 and pixel[2] < 80
+                )
+            assert red_pixels > 0
+            return TaskDecision(
+                done=True,
+                success=True,
+                reason="A red freehand circle is visible on the Paint canvas.",
+            )
+
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(
+            computer,
+            TaskPolicy(max_steps=6),
+        ).run(
+            "Draw a red circle near the centre of the canvas and verify it.",
+            planner,
+        )
+
+    assert result.success
+    assert result.status == "completed"
+    assert planner.calls == 4
+    assert result.steps[0].action == "click_element"
+    assert not result.steps[0].dispatched
+    assert result.steps[1].action == "click"
+    assert result.steps[1].dispatched and result.steps[1].verified
+    assert result.steps[2].action == "draw_path"
+    assert result.steps[2].dispatched and result.steps[2].verified
+    assert driver.clicked == [(5, 5, "left")]
+    assert len(driver.stroke_points) >= 10
+
+
+def test_paint_ellipse_failure_fallback_is_only_used_once():
+    driver = FreehandFallbackPaintDriver()
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            return TaskDecision(step=TaskStep(
+                action="click_element",
+                selector={"role": "button", "name": "Ellipse"},
+                expected={"screen_changed": {"min_fraction": 0.001}},
+            ))
+
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(
+            computer, TaskPolicy(max_steps=6)
+        ).run(
+            "Draw a red circle near the centre of the canvas and verify it.",
+            planner,
+        )
+
+    assert not result.success
+    assert result.status == "failed"
+    assert planner.calls == 2
+    assert len(result.steps) == 2
+    assert all(not step.dispatched for step in result.steps)
+    assert driver.clicked == []

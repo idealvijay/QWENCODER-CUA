@@ -333,6 +333,14 @@ class CuaDriverBackend(BaseDriver):
         from qwencoder_cua.drivers.cua.accessibility import CuaAccessibilityProvider
         return CuaAccessibilityProvider(self)
 
+    @staticmethod
+    def _normalize_role(role: str | None) -> str:
+        """Normalize Cua/UIA PascalCase roles to QWENCODER's lowercase role names."""
+        if not role:
+            return "unknown"
+        separated = re.sub(r"(?<!^)(?=[A-Z])", " ", role.strip())
+        return " ".join(separated.casefold().split())
+
     def accessibility_elements(self, window_id: str | None = None) -> list[UIElement]:
         self._require_connected()
         state = self._last_window_state
@@ -374,7 +382,7 @@ class CuaDriverBackend(BaseDriver):
                 actions.append("click")
             normalized.append(UIElement(
                 id=token or f"cua-index:{item.element_index}",
-                role=item.role or "unknown",
+                role=self._normalize_role(item.role),
                 name=item.label or None,
                 value=item.value,
                 bounds=bounds,

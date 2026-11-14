@@ -188,7 +188,10 @@ def test_closed_loop_replans_once_after_paint_click_has_no_visual_effect():
                     )
                 )
             assert len(history) == 2 and history[-1].verified
-            return TaskDecision(done=True, success=True, reason="The Paint control is selected.")
+            return TaskDecision(
+                done=True, success=False,
+                reason="The UI click changed, but no drawing gesture was performed.",
+            )
 
     driver = ReplanningDriver()
     with Computer(driver=driver, accessibility=False) as computer:

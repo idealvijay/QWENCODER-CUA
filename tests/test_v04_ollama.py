@@ -802,7 +802,7 @@ def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
         "reason": "Draw the circle outline.",
         "step": {
             "action": "draw_path",
-            "points": [coordinate for index in range(37) for coordinate in (600 + index, 200 + index)],
+            "points": [coordinate for index in range(37) for coordinate in (300 + index, 100 + index)],
             "duration_seconds": 1.0,
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
@@ -826,7 +826,7 @@ def test_planner_normalizes_flat_draw_path_coordinates(monkeypatch):
     assert result.step.action == "draw_path"
     assert len(result.step.points) == 37
     assert [(point.x, point.y) for point in result.step.points[:3]] == [
-        (600, 200), (601, 201), (602, 202)
+        (300, 100), (301, 101), (302, 102)
     ]
 
 
@@ -837,7 +837,7 @@ def test_planner_normalizes_pair_array_draw_path_coordinates(monkeypatch):
         "reason": "Draw a short path.",
         "step": {
             "action": "draw_path",
-            "points": [[600, 200], [620, 220]],
+            "points": [[300, 100], [320, 120]],
             "expected": {"screen_changed": {"min_fraction": 0.001}},
         },
     }
@@ -857,7 +857,7 @@ def test_planner_normalizes_pair_array_draw_path_coordinates(monkeypatch):
     result = planner.plan_next("Draw a short path.", observation, [])
 
     assert result.step is not None
-    assert [(point.x, point.y) for point in result.step.points] == [(600, 200), (620, 220)]
+    assert [(point.x, point.y) for point in result.step.points] == [(300, 100), (320, 120)]
 
 
 def test_planner_does_not_truncate_draw_path_over_64_waypoints(monkeypatch):

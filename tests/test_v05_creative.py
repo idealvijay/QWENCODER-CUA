@@ -234,7 +234,7 @@ def test_task_runner_maps_vision_click_coordinates_to_desktop():
     plan = TaskPlan(
         goal="Click the requested point from the planner screenshot",
         steps=[TaskStep(
-            action="click", x=320, y=160,
+            action="click", x=224, y=112,
             expected={"active_window_title_contains": "Paint"},
         )],
     )

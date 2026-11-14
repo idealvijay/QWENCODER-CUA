@@ -171,9 +171,10 @@ def test_paint_stale_target_id_gets_one_fresh_observation_retry():
     assert result.success
     assert planner.calls == 3
     assert driver.clicked == [(40, 30, "left")]
-    assert len(result.steps) == 1
-    assert result.steps[0].dispatched
-    assert result.steps[0].verified
+    assert len(result.steps) == 2
+    assert not result.steps[0].dispatched
+    assert result.steps[1].dispatched
+    assert result.steps[1].verified
 
 
 def test_paint_stale_target_recovery_is_bounded_to_one_retry():

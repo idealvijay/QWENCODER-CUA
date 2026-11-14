@@ -1,19 +1,28 @@
 from datetime import datetime, timezone
+from typing import Literal
+
 from pydantic import BaseModel, Field
+
 from .element import UIElement
 from .window import WindowInfo
+
 
 class ScreenshotRef(BaseModel):
     path: str | None = None
     media_type: str = "image/png"
     width: int | None = None
     height: int | None = None
+    origin_x: int = 0
+    origin_y: int = 0
+    coordinate_space: Literal["desktop", "window"] = "desktop"
+
 
 class Observation(BaseModel):
     observation_id: str
     platform: str
     session_type: str | None = None
     active_window: WindowInfo | None = None
+    target_window: WindowInfo | None = None
     windows: list[WindowInfo] = Field(default_factory=list)
     elements: list[UIElement] = Field(default_factory=list)
     accessibility_available: bool = False

@@ -67,11 +67,15 @@ in "reason", and set step=null. Do not invent a click, keypress, or other no-op 
 complete a read-only request. If the current observation is insufficient, return done=true,
 success=false and explain what is missing.
 
-If the user asks about a specific application (for example Paint or Photoshop) and that
-application is not the active window, do not invent a click or attempt to switch windows.
-Return done=true, success=false, step=null, and explain that the user must bring the target
-application to the foreground and run the request again. The allowed action list does not
-include window switching.
+If target_window is present in the observation context, it is the user-selected
+application window for this task. Treat it as authoritative even when active_window names another
+application. The screenshot is cropped to that target window's client area and all pointer
+coordinates are relative to the cropped image; the runner translates them to desktop coordinates.
+Do not refuse the task merely because active_window differs from target_window.
+If target_window is absent and the user asks about a specific application (for example Paint or
+Photoshop) that is not the active window, do not invent a click or attempt to switch windows.
+Return done=true, success=false and explain that the user must bring the target application to the
+foreground. The allowed action list does not include autonomous window selection.
 
 Otherwise, return exactly one next action and include its expected postcondition.
 Allowed actions:
@@ -229,7 +233,10 @@ class OllamaTaskPlanner:
                 observation.screenshot.height,
             )
             output_size = planner_image_dimensions(*source_size)
-            desktop_size = {"width": source_size[0], "height": source_size[1]}
+            desktop_size = (
+                {"width": source_size[0], "height": source_size[1]}
+                if observation.screenshot.coordinate_space == "desktop" else None
+            )
             screen_size = {"width": output_size[0], "height": output_size[1]}
         target_registry = self.target_detector.detect(observation)
         context = {
@@ -237,6 +244,14 @@ class OllamaTaskPlanner:
             "platform": observation.platform,
             "session_type": observation.session_type,
             "active_window": observation.active_window.model_dump() if observation.active_window else None,
+            "target_window": observation.target_window.model_dump() if observation.target_window else None,
+            "capture_coordinate_space": (
+                observation.screenshot.coordinate_space if observation.screenshot else None
+            ),
+            "capture_origin": (
+                {"x": observation.screenshot.origin_x, "y": observation.screenshot.origin_y}
+                if observation.screenshot else None
+            ),
             "accessibility_available": observation.accessibility_available,
             "desktop_size": desktop_size,
             "screen_size": screen_size,
@@ -324,10 +339,15 @@ class OllamaTaskPlanner:
                     decision = TaskDecision.model_validate(decision_data)
                     if self._is_manual_ui_handoff(goal, observation, decision):
                         if attempt == 0:
-                            active = observation.active_window
+                            active = observation.target_window or observation.active_window
+                            selected_window = observation.target_window is not None
                             active_identity = (
                                 f"title={active.title!r}, process={active.process_name!r}"
                                 if active else "unknown"
+                            )
+                            window_source = (
+                                "The user-selected target-window metadata reports: "
+                                if selected_window else "The OS foreground-window API reports: "
                             )
                             messages = [
                                 *messages,
@@ -336,7 +356,7 @@ class OllamaTaskPlanner:
                                     "role": "user",
                                     "content": (
                                         "Your terminal response conflicts with platform window metadata. "
-                                        f"The OS foreground-window API reports: {active_identity}. "
+                                        f"{window_source}{active_identity}. "
                                         "This metadata identifies the foreground window, but it does "
                                         "not prove that its contents are visible in the screenshot. "
                                         "Re-examine the attached screenshot carefully. If Paint is "
@@ -474,8 +494,10 @@ class OllamaTaskPlanner:
         """Detect a terminal refusal that delegates normal drawing UI setup to the user."""
         if not decision.done or decision.success:
             return False
-        active = observation.active_window
-        if active is None or not active.is_active:
+        active = observation.target_window or observation.active_window
+        if active is None:
+            return False
+        if observation.target_window is None and not active.is_active:
             return False
 
         reason = decision.reason.casefold()

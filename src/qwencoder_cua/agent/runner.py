@@ -166,15 +166,15 @@ class TaskRunner:
         self,
         plan: TaskPlan,
         approve: ApprovalCallback | None = None,
-        coordinate_space: Literal["desktop", "planner_image"] = "desktop",
+        coordinate_space: Literal["desktop", "window", "planner_image"] = "desktop",
     ) -> TaskRunResult:
         """Execute a fixed plan.
 
         Fixed plans default to native desktop pixels. The closed-loop vision planner
         explicitly selects planner_image coordinates, which are scaled before dispatch.
         """
-        if coordinate_space not in {"desktop", "planner_image"}:
-            raise ValueError("coordinate_space must be 'desktop' or 'planner_image'.")
+        if coordinate_space not in {"desktop", "window", "planner_image"}:
+            raise ValueError("coordinate_space must be desktop, window or planner_image.")
         self._require_connected()
         if not isinstance(plan, TaskPlan):
             plan = TaskPlan.model_validate(plan)
@@ -226,7 +226,11 @@ class TaskRunner:
                 try:
                     if step.action == "click_target":
                         dispatch_step = self._resolve_target_click(step, before)
-                        dispatch_coordinate_space = "desktop"
+                        dispatch_coordinate_space = (
+                            "window" if before.screenshot
+                            and before.screenshot.coordinate_space == "window"
+                            else "desktop"
+                        )
                 except Exception as exc:
                     results.append(TaskStepResult(
                         step_id=step.step_id, action=step.action, dispatched=False,
@@ -250,8 +254,10 @@ class TaskRunner:
                         return self._result(plan, False, "failed", results, bounds_error, started)
                     continue
                 try:
-                    if dispatch_coordinate_space == "planner_image":
-                        dispatch_step = self._to_desktop_coordinates(dispatch_step, before)
+                    if dispatch_coordinate_space != "desktop":
+                        dispatch_step = self._to_desktop_coordinates(
+                            dispatch_step, before, dispatch_coordinate_space
+                        )
                     self._dispatch(dispatch_step)
                 except Exception as exc:
                     results.append(TaskStepResult(
@@ -363,7 +369,7 @@ class TaskRunner:
     def _validate_pointer_bounds(
         step: TaskStep,
         observation: Observation,
-        coordinate_space: Literal["desktop", "planner_image"] = "desktop",
+        coordinate_space: Literal["desktop", "window", "planner_image"] = "desktop",
     ) -> str | None:
         """Reject pointer/drawing coordinates outside the captured desktop image."""
         if step.action not in {"click", "move_mouse", "drag", "draw_path"}:
@@ -373,8 +379,14 @@ class TaskRunner:
             return "Cannot validate pointer coordinates without screenshot dimensions."
         if coordinate_space == "planner_image":
             width, height = planner_image_dimensions(screenshot.width, screenshot.height)
+            offset_x = offset_y = 0
+        elif coordinate_space == "window":
+            width, height = screenshot.width, screenshot.height
+            offset_x = offset_y = 0
         else:
             width, height = screenshot.width, screenshot.height
+            offset_x = screenshot.origin_x if screenshot.coordinate_space == "window" else 0
+            offset_y = screenshot.origin_y if screenshot.coordinate_space == "window" else 0
         if step.action in {"click", "move_mouse"}:
             points = [(step.x, step.y)]
         elif step.action == "drag":
@@ -382,27 +394,46 @@ class TaskRunner:
         else:
             points = [(point.x, point.y) for point in (step.points or [])]
         for x, y in points:
-            if x is None or y is None or not (0 <= x < width and 0 <= y < height):
+            if x is None or y is None:
+                return "Pointer coordinates must contain both x and y."
+            if coordinate_space == "desktop" and screenshot.coordinate_space == "window":
+                valid = offset_x <= x < offset_x + width and offset_y <= y < offset_y + height
+            else:
+                valid = 0 <= x < width and 0 <= y < height
+            if not valid:
                 return (
-                    f"Pointer coordinate ({x}, {y}) is outside the captured desktop "
-                    f"({width}x{height} {coordinate_space} pixels)."
+                    f"Pointer coordinate ({x}, {y}) is outside the captured "
+                    f"{coordinate_space} region ({width}x{height}, origin "
+                    f"{offset_x},{offset_y})."
                 )
         return None
 
     @staticmethod
-    def _to_desktop_coordinates(step: TaskStep, observation: Observation) -> TaskStep:
-        """Map planner-image pixel coordinates to physical desktop screenshot pixels."""
+    def _to_desktop_coordinates(
+        step: TaskStep,
+        observation: Observation,
+        coordinate_space: Literal["window", "planner_image"] = "planner_image",
+    ) -> TaskStep:
+        """Map window/planner-image pixels to global desktop input coordinates."""
         screenshot = observation.screenshot
         if not screenshot or not screenshot.width or not screenshot.height:
             return step
-        image_width, image_height = planner_image_dimensions(
-            screenshot.width, screenshot.height
-        )
-        scale_x = screenshot.width / image_width
-        scale_y = screenshot.height / image_height
+        if coordinate_space == "planner_image":
+            image_width, image_height = planner_image_dimensions(
+                screenshot.width, screenshot.height
+            )
+            scale_x = screenshot.width / image_width
+            scale_y = screenshot.height / image_height
+        elif coordinate_space == "window":
+            scale_x = scale_y = 1.0
+        else:
+            raise ValueError("Only window and planner_image coordinates require conversion.")
+
+        offset_x = screenshot.origin_x if screenshot.coordinate_space == "window" else 0
+        offset_y = screenshot.origin_y if screenshot.coordinate_space == "window" else 0
 
         def point(x: int, y: int) -> tuple[int, int]:
-            return round(x * scale_x), round(y * scale_y)
+            return round(x * scale_x) + offset_x, round(y * scale_y) + offset_y
 
         if step.action in {"click", "move_mouse"}:
             x, y = point(step.x, step.y)

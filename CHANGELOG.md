@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+- Add process/title/handle-based target-window binding for Windows task runs.
+- Capture the selected window client area and its UI Automation tree instead of the entire desktop.
+- Re-resolve and refocus the target before every observation, including after the native window handle changes.
+- Translate window-local and planner-image coordinates to desktop input coordinates using the current client-area origin.
+- Add CLI options for target-window runs and screenshots; keep full-desktop behavior as the default.
+
 ## 0.7.0
 - Add local Ollama scene planning that returns schema-validated, normalized ScenePlan objects.
 - Add DrawingExecutor to turn ellipse, rectangle, line, polygon and path objects into bounded pointer strokes.

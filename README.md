@@ -399,6 +399,36 @@ qwencoder-cua run-goal "Find the Save button"
 qwencoder-cua run-goal "Draw a red circle on the current canvas and verify the visible change"
 ```
 
+
+## Target-window mode (Windows)
+
+When a task is started from CMD or PowerShell, the console should not decide what the agent sees.
+Pin the run to the target application instead. List windows and identify the process name or window ID:
+
+```cmd
+qwencoder-cua windows
+qwencoder-cua screenshot --process-name mspaint.exe --output paint-window.png
+qwencoder-cua run-goal "Draw a red circle on the canvas and verify the result" --process-name mspaint.exe
+```
+
+You can also narrow by a title fragment or an exact handle:
+
+```cmd
+qwencoder-cua run-goal "Describe this window" --window-title "Untitled - Paint"
+qwencoder-cua run-goal "Describe this window" --window-id 123456
+```
+
+Target-window mode captures the selected window's client area, uses that window's UI Automation
+tree, and re-focuses/re-resolves the target before every observation. Window-relative model
+coordinates are translated using the current client-area screen origin before mouse input.
+The target is selected once by process/title/handle; a recreated native window handle can be
+re-resolved through the original process identity when unambiguous. Ambiguous matches are
+rejected rather than guessed. If Windows blocks foreground activation, click the target app
+once and rerun. This mode currently requires the Windows window-enumeration, focus and capture
+backend; Linux Wayland portals do not expose target-window enumeration/focus in this release.
+
+Without these flags, QWENCODER retains its existing full-desktop / foreground-window behavior.
+
 ## Safety model
 
 - Local Ollama endpoint by default; no hosted model or remote control service is required.

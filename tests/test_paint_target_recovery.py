@@ -422,9 +422,8 @@ class FreehandFallbackPaintDriver(PaintDriver):
         image = Image.new("RGB", (100, 80), "black")
         draw = ImageDraw.Draw(image)
         if self.pen_selected:
-            # Small toolbar highlight showing the Pencil tool was selected.
-            for point in ((5, 5), (6, 5), (5, 6), (6, 6)):
-                image.putpixel(point, (255, 255, 255))
+            # Visible toolbar highlight showing the Pencil tool was selected.
+            draw.rectangle((2, 2, 9, 9), fill=(255, 255, 255))
         if len(self.stroke_points) >= 2:
             draw.line(self.stroke_points, fill=(255, 0, 0), width=2)
         if output:

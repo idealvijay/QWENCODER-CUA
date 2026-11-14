@@ -373,8 +373,6 @@ class CuaDriverBackend(BaseDriver):
                 # vocabulary. QWENCODER's neutral action is "click"; the provider
                 # retains the Cua element token and delegates to its UIA action route.
                 actions.append("click")
-            if token and "set_value" in raw_actions:
-                actions.append("set_value")
             normalized.append(UIElement(
                 id=token or f"cua-index:{item.element_index}",
                 role=item.role or "unknown",

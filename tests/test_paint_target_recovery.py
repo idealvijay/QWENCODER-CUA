@@ -308,6 +308,10 @@ def test_ambiguous_target_alias_is_rejected_without_clicking():
 
 def test_tiny_shape_tool_highlight_passes_target_selection_verification():
     class TinyHighlightDriver(PaintDriver):
+        def click(self, x, y, button="left"):
+            self.clicked.append((x, y, button))
+            self.drawing_visible = True
+
         def screenshot(self, output=None):
             image = Image.new("RGB", (64, 64), "black")
             if self.drawing_visible:

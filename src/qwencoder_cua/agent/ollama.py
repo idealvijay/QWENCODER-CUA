@@ -100,9 +100,10 @@ Allowed actions:
 
 The image shown to you is a reduced copy of the original screenshot (maximum 640x400).
 Pointer coordinates MUST be measured in the reduced image dimensions in the `screen_size`
-field. The `capture_size` field records the original screenshot resolution. Never output
-coordinates measured against `capture_size`: the runner scales your `screen_size` points
-back to original screenshot pixels, then adds the target-window origin when applicable.
+field. The `capture_size` field records the original screenshot resolution. Coordinates
+returned in actions MUST use `screen_size` pixels, never `capture_size` or `desktop_size`
+pixels. The runner scales your `screen_size` points back to original screenshot pixels, then
+adds the target-window origin when applicable.
 This preserves full-resolution input accuracy while keeping the vision payload small. Before returning a coordinate action, check every
 coordinate numerically: `0 <= x < screen_size.width` and `0 <= y < screen_size.height`.
 For drag, check both endpoints; for draw_path, check every waypoint. Never return a coordinate

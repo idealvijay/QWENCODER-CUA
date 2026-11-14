@@ -55,6 +55,8 @@ class TaskRunner:
         history: list[TaskStepResult] = []
         no_change_click_replans = 0
         max_no_change_click_replans = 1
+        stale_target_replans = 0
+        max_stale_target_replans = 1
 
         for index in range(1, self.policy.max_steps + 2):
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
@@ -106,12 +108,14 @@ class TaskRunner:
             if not step_result.success:
                 if (
                     no_change_click_replans < max_no_change_click_replans
-                    and self._can_replan_after_no_change(goal, decision.step, step_result)
+                    and self._can_replan_after_no_change(
+                        goal, decision.step, step_result, observation
+                    )
                 ):
                     no_change_click_replans += 1
                     # Preserve the failed attempt in planner history and include its
-                    # planner-image point so the model can inspect the fresh screenshot
-                    # without blindly repeating the same click.
+                    # planner-image point or named target so the model can inspect the
+                    # fresh screenshot without blindly repeating the same click.
                     failed = step_result.steps[-1]
                     attempted = (
                         f"planner-image point: ({decision.step.x}, {decision.step.y})"
@@ -121,12 +125,33 @@ class TaskRunner:
                     failed = failed.model_copy(update={
                         "message": (
                             f"{failed.message} Last attempted {attempted}. "
-                            "This click had no detected visual effect; re-inspect the screen "
-                            "and do not repeat the same target or point."
+                            "This click had no detected visual effect; re-inspect the current "
+                            "screenshot and do not repeat the same target or point."
                         )
                     })
                     history.extend([*step_result.steps[:-1], failed])
                     continue
+
+                if (
+                    stale_target_replans < max_stale_target_replans
+                    and self._can_replan_after_stale_target(
+                        goal, decision.step, step_result, observation
+                    )
+                ):
+                    stale_target_replans += 1
+                    failed = step_result.steps[-1]
+                    failed = failed.model_copy(update={
+                        "message": (
+                            f"{failed.message} The target ID is not valid for the current "
+                            "observation. Re-inspect the NEW screenshot and use only an exact "
+                            "target_id listed in the current available_targets. Do not "
+                            "reconstruct or reuse the missing ID. If no matching target is "
+                            "listed, use a coordinate grounded in the current screenshot."
+                        )
+                    })
+                    history.extend([*step_result.steps[:-1], failed])
+                    continue
+
                 history.extend(step_result.steps)
                 return self._run_result(
                     run_id, goal, False, step_result.status, history,
@@ -140,16 +165,39 @@ class TaskRunner:
         )
 
     @staticmethod
-    def _can_replan_after_no_change(
-        goal: str, step: TaskStep, result: TaskRunResult
-    ) -> bool:
-        """Allow one fresh planner observation after an ineffective Paint setup click."""
+    def _is_paint_drawing_task(goal: str, observation: Observation | None = None) -> bool:
+        """Recognize Paint from the selected/active app, not only from the user's wording."""
         task = goal.casefold()
-        is_paint_drawing = (
-            "paint" in task
-            and any(word in task for word in ("draw", "circle", "ellipse", "shape", "sketch"))
+        is_drawing = any(
+            word in task for word in ("draw", "circle", "ellipse", "shape", "sketch")
         )
-        if not is_paint_drawing or step.action not in {"click", "click_target"}:
+        if not is_drawing:
+            return False
+        if "paint" in task or "mspaint" in task:
+            return True
+        if observation is None:
+            return False
+
+        windows = (observation.target_window, observation.active_window)
+        for window in windows:
+            if window is None:
+                continue
+            identity = f"{window.title} {window.process_name or ''}".casefold()
+            if "paint" in identity or "mspaint" in identity:
+                return True
+        return False
+
+    @staticmethod
+    def _can_replan_after_no_change(
+        goal: str,
+        step: TaskStep,
+        result: TaskRunResult,
+        observation: Observation | None = None,
+    ) -> bool:
+        """Allow one fresh observation after an ineffective Paint drawing setup click."""
+        if not TaskRunner._is_paint_drawing_task(goal, observation):
+            return False
+        if step.action not in {"click", "click_target"}:
             return False
         if "screen_changed" not in step.expected or result.status != "failed":
             return False
@@ -160,6 +208,28 @@ class TaskRunner:
             attempt.dispatched
             and not attempt.verified
             and "Changed pixels: 0.0%" in attempt.message
+        )
+
+    @staticmethod
+    def _can_replan_after_stale_target(
+        goal: str,
+        step: TaskStep,
+        result: TaskRunResult,
+        observation: Observation | None = None,
+    ) -> bool:
+        """Allow one fresh planner pass when a Paint target ID is absent from the new tree."""
+        if not TaskRunner._is_paint_drawing_task(goal, observation):
+            return False
+        if step.action != "click_target" or result.status != "failed":
+            return False
+        if len(result.steps) != 1:
+            return False
+        attempt = result.steps[0]
+        message = attempt.message.casefold()
+        return (
+            not attempt.dispatched
+            and "target resolution failed" in message
+            and "not in the current observation" in message
         )
 
     def execute(

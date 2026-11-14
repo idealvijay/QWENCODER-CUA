@@ -126,14 +126,34 @@ Normal UI setup is part of the task, not a blocker: selecting a colour, brush, s
 then using it are actions for you to perform. When the target application is active, never return
 a terminal failure saying the user must select a colour/tool/shape or click the canvas if those
 controls can be operated with the allowed actions. Instead, return one concrete next UI action.
-For a circle in Paint, strongly prefer the built-in Ellipse/Oval shape when it is visibly
-available: set no fill and a red outline, then use one drag for the circle's bounding box. Only
-use a closed draw_path when no suitable built-in ellipse control is visible. For a freehand circle,
-use 12-24 evenly distributed waypoints around one smooth circumference. Every point MUST be a
-JSON object with integer x and y fields, for example "points":[{"x":600,"y":300},
-{"x":620,"y":280}]. Never return a flat number list or nested coordinate arrays. Do not produce
-stair-step, zigzag, rectangular, or repeated-point paths. Do not exceed 64 waypoints. Do not claim
-a tool or shape is absent without checking the screenshot and accessible elements.
+For a circle in Paint, first try the built-in Ellipse/Oval shape when it is visibly
+available: set no fill and a red outline, then use one drag for the circle's bounding box.
+
+IMPORTANT FALLBACK: If selecting Ellipse/Oval fails for ANY reason (selector did not match,
+target is missing/ambiguous, click dispatch failed, or the selection produced no verified visual
+change), abandon the ellipse tool for the rest of this task. Do not retry Ellipse with another
+selector or invented target ID. The runner will add "ELLIPSE FALLBACK REQUIRED" to completed_steps.
+When that marker is present, you MUST switch to freehand drawing: select the Pencil/Pen tool; if it
+is not visible, use the Brush tool. Select red as the foreground/drawing colour if it is not
+already selected. Then locate the drawable canvas and use ONE draw_path action to draw a smooth,
+closed circle near its centre. This fallback is mandatory; do not report the task as blocked just
+because Ellipse selection failed.
+
+For freehand circle drawing, use 16-24 evenly spaced integer-coordinate waypoints around one smooth
+circumference, and close the path by repeating the first point once at the end. Choose a radius
+around 10-15% of the smaller drawable canvas dimension, large enough to remain visible after the
+64x64 verification downsample. Every point MUST be a JSON object with integer x and y fields,
+for example "points":[{"x":200,"y":140},{"x":220,"y":125}]. Never return a flat number list or
+nested coordinate arrays. Do not produce stair-step, zigzag, rectangular, or repeated intermediate
+points. Do not exceed 64 waypoints. Keep every point inside the drawable canvas, not in the
+toolbar or ribbon.
+
+SUCCESS CONDITION FOR DRAWING GOALS: A selected Pencil/Pen/Brush, selected red colour, or changed
+toolbar highlight is NOT completion. Do not return done=true, success=true until the current
+screenshot visibly shows the requested red circular artwork on the canvas. After draw_path, inspect
+the new screenshot. If the circle is not clearly visible, plan a corrective drawing action; only
+finish when the artwork itself is visible. If the colour cannot be confirmed, inspect the visible
+palette and choose red rather than claiming success.
 
 For a Paint/Photoshop stroke, identify the drawable canvas first. Use draw_path (one atomic
 press/move/release) for a freehand path; use drag for a straight drag or a native
@@ -156,6 +176,11 @@ in the current observation, the ID was stale or hallucinated. Inspect the NEW sc
 current available_targets list. Use only a target_id copied exactly from that current list; never
 reconstruct an ID from a label or reuse an earlier ID. If no suitable target is listed, use a
 coordinate click grounded in the NEW screenshot. The runner permits only one stale-target recovery.
+
+If any completed_steps message contains "ELLIPSE FALLBACK REQUIRED", this is a mandatory
+task-state transition. Never attempt Ellipse/Oval again. Select Pencil/Pen (or Brush if Pencil/Pen
+is unavailable), select red, then draw the closed freehand circle with draw_path. Do not finish
+until the screenshot visibly confirms the red circle on the canvas.
 
 A non-terminal response MUST use this exact structure (no wrapper keys):
 {"done": false, "success": true, "reason": "Why this one action is next.", "step": {

@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Fall back from failed Paint Ellipse/Oval selection to Pencil/Pen (or Brush) and a closed freehand circle path; require a verified drawing gesture before a Paint drawing task can report success.
 - Hard-cap Ollama planner context at exactly 20,000 tokens and bound generated responses to 1,024 tokens; larger legacy environment values are clamped.
 - Downsample screenshots sent to vision models to an aspect-preserving maximum edge of 448 pixels while retaining original captures for verification.
 - Expose original capture dimensions separately from model-image dimensions and map model coordinates back to original pixels plus target-window origin.

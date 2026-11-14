@@ -899,8 +899,10 @@ def test_planner_does_not_truncate_draw_path_over_64_waypoints(monkeypatch):
 def test_prompt_requires_object_waypoints_and_prefers_native_paint_ellipse():
     normalized = " ".join(SYSTEM_PROMPT.split())
     assert 'points (2-64 objects, each exactly {"x": int, "y": int})' in normalized
-    assert "strongly prefer the built-in Ellipse/Oval shape" in normalized
-    assert "12-24 evenly distributed waypoints" in normalized
+    assert "first try the built-in Ellipse/Oval shape" in normalized
+    assert "ELLIPSE FALLBACK REQUIRED" in normalized
+    assert "16-24 evenly spaced integer-coordinate waypoints" in normalized
+    assert "requested red circular artwork on the canvas" in normalized
     assert "Never return a flat number list or nested coordinate arrays." in normalized
 
 

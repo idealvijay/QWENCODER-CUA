@@ -61,6 +61,10 @@ class TaskRunner:
         max_no_change_click_replans = 1
         stale_target_replans = 0
         max_stale_target_replans = 1
+        freehand_fallbacks = 0
+        max_freehand_fallbacks = 1
+        premature_success_replans = 0
+        max_premature_success_replans = 1
 
         for index in range(1, self.policy.max_steps + 2):
             remaining = self.policy.max_runtime_seconds - (time.monotonic() - clock_start)
@@ -78,6 +82,44 @@ class TaskRunner:
                 Path(screenshot_path).unlink(missing_ok=True)
 
             if decision.done:
+                if (
+                    decision.success
+                    and self._is_paint_drawing_task(goal, observation)
+                    and not any(
+                        item.verified and item.action in {"draw_path", "drag"}
+                        for item in history
+                    )
+                ):
+                    premature_success_replans += 1
+                    guard = TaskStepResult(
+                        step_id=uuid4().hex[:12],
+                        action="task_completion_guard",
+                        dispatched=False,
+                        verified=False,
+                        message=(
+                            "DRAWING NOT COMPLETE: selecting Ellipse/Pencil, selecting red, "
+                            "or changing the toolbar is not the requested artwork. The current "
+                            "history contains no verified drag or draw_path. Inspect the latest "
+                            "canvas screenshot and draw the red circle before reporting success. "
+                            + (
+                                "ELLIPSE FALLBACK REQUIRED: use Pencil/Pen or Brush and a "
+                                "smooth closed draw_path; do not retry Ellipse."
+                                if freehand_fallbacks else
+                                "Use the built-in Ellipse with a drag, or use Pencil/Pen with "
+                                "a smooth closed draw_path if Ellipse selection fails."
+                            )
+                        ),
+                        before_observation_id=observation.observation_id,
+                    )
+                    history.append(guard)
+                    if premature_success_replans <= max_premature_success_replans:
+                        continue
+                    return self._run_result(
+                        run_id, goal, False, "failed", history,
+                        "Planner reported success before a verified drawing gesture existed.",
+                        started,
+                    )
+
                 return self._run_result(
                     run_id, goal, decision.success,
                     "completed" if decision.success else "failed", history,
@@ -103,20 +145,33 @@ class TaskRunner:
                         decision.step, observation
                     )
                 except (TargetNotFoundError, AmbiguousTargetError) as exc:
-                    stale_target_replans += 1
                     failed = TaskStepResult(
                         step_id=decision.step.step_id,
                         action=decision.step.action,
                         dispatched=False,
                         verified=False,
-                        message=(
-                            f"Planner target validation failed: {exc}. Use only an exact "
-                            "target from the current observation's available_targets. "
-                            "When an ID is an approximate label, use a coordinate grounded "
-                            "in the current screenshot instead."
-                        ),
+                        message=f"Planner target validation failed: {exc}.",
                         before_observation_id=observation.observation_id,
                     )
+                    if (
+                        freehand_fallbacks < max_freehand_fallbacks
+                        and self._is_ellipse_selection_step(
+                            decision.step, reason=decision.reason
+                        )
+                        and self._is_paint_drawing_task(goal, observation)
+                    ):
+                        freehand_fallbacks += 1
+                        history.append(self._mark_ellipse_fallback(failed))
+                        continue
+
+                    stale_target_replans += 1
+                    failed = failed.model_copy(update={
+                        "message": (
+                            f"{failed.message} Use only an exact target from the current "
+                            "observation's available_targets. When an ID is an approximate "
+                            "label, use a coordinate grounded in the current screenshot."
+                        )
+                    })
                     history.append(failed)
                     if stale_target_replans <= max_stale_target_replans:
                         continue
@@ -149,6 +204,33 @@ class TaskRunner:
                 target_hint=target_hint,
             )
             if not step_result.success:
+                if (
+                    freehand_fallbacks < max_freehand_fallbacks
+                    and self._is_ellipse_selection_step(
+                        decision.step, target_hint=target_hint, reason=decision.reason
+                    )
+                    and self._is_paint_drawing_task(goal, observation)
+                    and self._is_retryable_ellipse_selection_failure(step_result)
+                ):
+                    freehand_fallbacks += 1
+                    failed = (
+                        step_result.steps[-1]
+                        if step_result.steps
+                        else TaskStepResult(
+                            step_id=decision.step.step_id,
+                            action=decision.step.action,
+                            dispatched=False,
+                            verified=False,
+                            message=step_result.message,
+                            before_observation_id=observation.observation_id,
+                        )
+                    )
+                    history.extend([
+                        *step_result.steps[:-1],
+                        self._mark_ellipse_fallback(failed),
+                    ])
+                    continue
+
                 if (
                     no_change_click_replans < max_no_change_click_replans
                     and self._can_replan_after_no_change(
@@ -206,6 +288,65 @@ class TaskRunner:
             run_id, goal, False, "timed_out", history,
             f"Planner did not finish within the {self.policy.max_steps}-step limit.", started,
         )
+
+    @staticmethod
+    def _is_ellipse_selection_step(
+        step: TaskStep,
+        target_hint: UITarget | None = None,
+        reason: str | None = None,
+    ) -> bool:
+        """Identify attempts to select Paint's native Ellipse/Oval tool."""
+        if step.action not in {"click_element", "click_target", "click"}:
+            return False
+        values = [reason or "", step.target_id or ""]
+        if step.selector is not None:
+            values.extend([
+                step.selector.name or "",
+                step.selector.automation_id or "",
+                step.selector.class_name or "",
+                step.selector.parent_name or "",
+                step.selector.value or "",
+            ])
+        if target_hint is not None:
+            values.extend([
+                target_hint.label,
+                target_hint.kind,
+                str(target_hint.metadata.get("automation_id") or ""),
+            ])
+        identity = " ".join(values).casefold()
+        return bool(re.search(r"\b(ellipse|oval)\b", identity))
+
+    @staticmethod
+    def _is_retryable_ellipse_selection_failure(result: TaskRunResult) -> bool:
+        """Fallback on a failed dispatch or verification, never on a successful selection."""
+        if result.status not in {"failed", "timed_out"}:
+            return False
+        if not result.steps:
+            return True
+        attempt = result.steps[-1]
+        if attempt.verified:
+            return False
+        message = attempt.message.casefold()
+        return (
+            not attempt.dispatched
+            or "changed pixels:" in message
+            or "verification" in message
+        )
+
+    @staticmethod
+    def _mark_ellipse_fallback(attempt: TaskStepResult) -> TaskStepResult:
+        """Tell the next planner call to abandon Ellipse and use a freehand tool."""
+        return attempt.model_copy(update={
+            "message": (
+                f"{attempt.message} ELLIPSE FALLBACK REQUIRED: Do not try Ellipse/Oval "
+                "again in this task. Inspect the fresh screenshot, select the Pencil/Pen "
+                "tool (or Brush if Pencil/Pen is unavailable), select red as the drawing "
+                "colour, locate the drawable canvas, and draw the requested circle manually "
+                "with one smooth closed draw_path. Use 16-24 evenly spaced points. Continue "
+                "until the actual red circle is visible on the canvas; tool selection alone "
+                "does not complete the goal."
+            )
+        })
 
     @staticmethod
     def _is_paint_drawing_task(goal: str, observation: Observation | None = None) -> bool:

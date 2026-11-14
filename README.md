@@ -299,10 +299,12 @@ The lower-level `Computer` methods are `move(x, y)`, `mouse_down(x, y, button)`,
 
 The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. MiniCPM sees an aspect-preserving image copy no larger than `448x448`; its click and drawing coordinates are measured in those reduced-image pixels. The runner maps them to the original full-resolution screenshot pixels before dispatch, then applies the target-window origin when window mode is active. The original screenshot is retained for verification, so reducing model-image resolution does not reduce pointer precision. A path contains 2–64 waypoints, and its duration is limited to 10 seconds. QWENCODER validates against the planner image dimensions. The direct Python `Computer` drawing API uses native desktop screenshot pixels. A path should use a `screen_changed` postcondition (for example, `{"screen_changed": {"min_fraction": 0.001}}`) so the runner checks whether the canvas visibly changed.
 
-Example request after opening Paint, selecting a brush and colour, and placing Paint in the foreground:
+For Paint circles, the planner first tries the built-in Ellipse/Oval tool. When that selection cannot be dispatched or verified, the runner marks a mandatory fallback: the planner must stop retrying Ellipse, select Pencil/Pen (or Brush if Pencil/Pen is unavailable), select red, and draw a smooth closed circle with `draw_path`. For a Paint drawing request, selecting a tool or changing a toolbar highlight is not completion: the runner requires a verified `drag` or `draw_path` before it accepts a successful terminal decision, and the planner must visually inspect the canvas for the requested red circle.
+
+Example request after opening Paint and placing it in the foreground:
 
 ```cmd
-qwencoder-cua run-goal "Draw a red circle near the centre of the blank Paint canvas. Use a smooth closed path and verify that the canvas changes."
+qwencoder-cua run-goal "Draw a red circle near the centre of the blank Paint canvas and verify the finished circle." --process-name mspaint.exe
 ```
 
 For coordinate-driven UI selections and strokes, use a visual `screen_changed` postcondition rather than guessing that a colour swatch or tool control disappears after selection. The runner captures a fresh screenshot before every planned step and maps planner-image coordinates using that observation's current desktop width and height. The planner now checks each model-generated coordinate against the exact resized image dimensions before a step is accepted. If a coordinate is out of range, the model gets one correction attempt with the offending point and valid bounds; a second invalid answer is rejected without clicking. If the Windows display resolution or scaling changes between tasks, start a new task so the model receives the updated screenshot dimensions.

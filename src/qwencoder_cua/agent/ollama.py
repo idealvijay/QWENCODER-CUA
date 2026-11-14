@@ -52,11 +52,12 @@ def _normalize_draw_path_points(step_data: dict[str, Any]) -> None:
         ]
 
 
-MAX_NUM_CTX = 20480
+MAX_NUM_CTX = 20000
 MAX_PROMPT_CONTEXT_CHARS = 24000
 MAX_ACCESSIBLE_ELEMENTS = 80
 MAX_PROMPT_TARGETS = 48
 MAX_COMPLETED_STEPS = 6
+MAX_NUM_PREDICT = 1024
 
 
 SYSTEM_PROMPT = """You are the planning component of QWENCODER CUA, a local desktop automation agent.
@@ -98,7 +99,7 @@ Allowed actions:
 - drag: start_x, start_y, end_x, end_y, optional button and duration_seconds
 - draw_path: points (2-64 objects, each exactly {"x": int, "y": int}), optional button and duration_seconds
 
-The image shown to you is a reduced copy of the original screenshot (maximum 640x400).
+The image shown to you is a reduced copy of the original screenshot (maximum 448x448).
 Pointer coordinates MUST be measured in the reduced image dimensions in the `screen_size`
 field. The `capture_size` field records the original screenshot resolution. Coordinates
 returned in actions MUST use `screen_size` pixels, never `capture_size` or `desktop_size`
@@ -213,7 +214,7 @@ class OllamaTaskPlanner:
         model_hint = self.model.lower()
         self.include_images = any(token in model_hint for token in
                                   ("minicpm-v", "vision", "-vl", "llava"))
-        raw_num_ctx = num_ctx if num_ctx is not None else os.environ.get("QWENCODER_CUA_NUM_CTX", "20480")
+        raw_num_ctx = num_ctx if num_ctx is not None else os.environ.get("QWENCODER_CUA_NUM_CTX", "20000")
         try:
             self.num_ctx = int(raw_num_ctx)
         except (TypeError, ValueError) as exc:
@@ -327,7 +328,7 @@ class OllamaTaskPlanner:
                     "messages": messages,
                     "stream": False,
                     "format": "json",
-                    "options": {"num_ctx": self.num_ctx},
+                    "options": {"num_ctx": self.num_ctx, "num_predict": MAX_NUM_PREDICT},
                 }
                 request = urllib.request.Request(
                     self.endpoint,

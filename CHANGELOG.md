@@ -1,8 +1,8 @@
 # Changelog
 
 ## Unreleased
-- Hard-cap Ollama planner context at 20,480 tokens; larger legacy environment values are clamped.
-- Downsample screenshots sent to vision models to an aspect-preserving maximum of 640x400 while retaining original captures for verification.
+- Hard-cap Ollama planner context at exactly 20,000 tokens and bound generated responses to 1,024 tokens; larger legacy environment values are clamped.
+- Downsample screenshots sent to vision models to an aspect-preserving maximum edge of 448 pixels while retaining original captures for verification.
 - Expose original capture dimensions separately from model-image dimensions and map model coordinates back to original pixels plus target-window origin.
 - Bound accessibility elements, named targets and history in the planner context to avoid context overflow.
 - Add process/title/handle-based target-window binding for Windows task runs.

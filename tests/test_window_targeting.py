@@ -221,5 +221,5 @@ def test_planner_image_coordinates_map_to_original_window_capture_and_origin():
         step, observation, coordinate_space="planner_image"
     )
 
-    # 600x400 model-image centre -> 1200x800 original capture centre + window origin.
-    assert (mapped.x, mapped.y) == (900, 600)
+    # 448x299 model-image point -> original capture pixels + current window origin.
+    assert (mapped.x, mapped.y) == (1104, 735)

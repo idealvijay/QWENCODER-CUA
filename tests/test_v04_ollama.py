@@ -25,6 +25,7 @@ def test_planner_uses_local_ollama_defaults(monkeypatch):
     assert planner.endpoint == "http://127.0.0.1:11434/api/chat"
     assert planner.model == "minicpm-v4.5:q4_0"
     assert planner.include_images
+    assert planner.num_ctx == 20000
 
 
 def test_screenshot_is_resized_and_encoded(tmp_path):
@@ -39,7 +40,7 @@ def test_screenshot_is_resized_and_encoded(tmp_path):
     raw = base64.b64decode(images[0])
     assert raw.startswith(b"\xff\xd8")
     with Image.open(BytesIO(raw)) as resized:
-        assert resized.size == (640, 384)
+        assert resized.size == (448, 269)
 
 
 def test_text_only_model_does_not_receive_image_payload():
@@ -449,7 +450,7 @@ def test_planner_rejects_coordinates_still_out_of_range_after_retry(monkeypatch)
 
 
 def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
-    size = {"width": 640, "height": 268}
+    size = {"width": 448, "height": 188}
     bad_click = TaskStep(
         action="click", x=6000, y=280,
         expected={"screen_changed": {"min_fraction": 0.001}},
@@ -468,7 +469,7 @@ def test_coordinate_errors_validate_all_path_points_and_drag_endpoints():
         expected={"screen_changed": {"min_fraction": 0.001}},
     )
     assert OllamaTaskPlanner._coordinate_errors(bad_path, size) == [
-        "Point 2 (1300, 20) is outside 0<=x<640, 0<=y<268."
+        "Point 2 (1300, 20) is outside 0<=x<448, 0<=y<188."
     ]
 
 
@@ -477,6 +478,7 @@ def test_prompt_has_strict_planner_image_coordinate_bounds():
     assert "0 <= x < screen_size.width" in normalized
     assert "Coordinates returned in actions MUST use" in normalized
     assert "do not guess" in normalized
+    assert "maximum 448x448" in normalized
 
 
 
@@ -995,11 +997,11 @@ def test_planner_scales_named_target_bounds_to_resized_image(monkeypatch):
 
     context = json.loads(captured["payload"]["messages"][1]["content"])
     target = context["available_targets"][0]
-    assert context["screen_size"] == {"width": 640, "height": 320}
+    assert context["screen_size"] == {"width": 448, "height": 224}
     assert context["capture_size"] == {"width": 2000, "height": 1000}
     assert target["coordinate_space"] == "planner_image_pixels"
-    assert target["bounds"] == {"x": 320, "y": 160, "width": 64, "height": 32}
-    assert target["center"] == {"x": 352, "y": 176}
+    assert target["bounds"] == {"x": 224, "y": 112, "width": 45, "height": 22}
+    assert target["center"] == {"x": 246, "y": 123}
 
 
 def test_planner_accepts_injected_target_detector():

@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-PLANNER_IMAGE_MAX_WIDTH = 640
-PLANNER_IMAGE_MAX_HEIGHT = 400
+PLANNER_IMAGE_MAX_WIDTH = 448
+PLANNER_IMAGE_MAX_HEIGHT = 448
 
 
 def planner_image_dimensions(

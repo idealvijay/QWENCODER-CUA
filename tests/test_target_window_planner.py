@@ -69,18 +69,18 @@ def test_planner_context_distinguishes_target_window_from_foreground_terminal(mo
     assert context["capture_coordinate_space"] == "window"
     assert context["capture_origin"] == {"x": 300, "y": 200}
     assert context["desktop_size"] is None
-    assert context["screen_size"] == {"width": 600, "height": 400}
+    assert context["screen_size"] == {"width": 448, "height": 299}
     assert context["capture_size"] == {"width": 1200, "height": 800}
-    assert captured["payload"]["options"]["num_ctx"] == 20480
+    assert captured["payload"]["options"] == {"num_ctx": 20000, "num_predict": 1024}
     assert "Treat it as authoritative" in SYSTEM_PROMPT
     assert "capture_size" in SYSTEM_PROMPT
 
 
 
-def test_num_ctx_is_hard_capped_at_20480(monkeypatch):
+def test_num_ctx_is_hard_capped_at_20000(monkeypatch):
     monkeypatch.setenv("QWENCODER_CUA_NUM_CTX", "32768")
     planner = OllamaTaskPlanner(model="minicpm-v4.5:q4_0")
-    assert planner.num_ctx == 20480
+    assert planner.num_ctx == 20000
 
 
 def test_vision_image_is_downsampled_but_original_capture_is_preserved(tmp_path):
@@ -103,7 +103,7 @@ def test_vision_image_is_downsampled_but_original_capture_is_preserved(tmp_path)
     encoded = OllamaTaskPlanner._read_observation_image(observation)
     assert len(encoded) == 1
     model_image = Image.open(io.BytesIO(base64.b64decode(encoded[0])))
-    assert model_image.size == (600, 400)
+    assert model_image.size == (448, 299)
 
     # The on-disk original remains full resolution for verification and coordinate mapping.
     with Image.open(screenshot_path) as retained_original:

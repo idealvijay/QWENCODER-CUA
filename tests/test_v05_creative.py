@@ -305,5 +305,5 @@ def test_planner_context_matches_resized_image_dimensions(monkeypatch, tmp_path)
 
     user_context = json.loads(captured["payload"]["messages"][1]["content"])
     assert user_context["desktop_size"] == {"width": 3440, "height": 1440}
-    assert user_context["screen_size"] == {"width": 640, "height": 268}
+    assert user_context["screen_size"] == {"width": 448, "height": 188}
     assert user_context["capture_size"] == {"width": 3440, "height": 1440}

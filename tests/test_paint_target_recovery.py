@@ -82,7 +82,7 @@ class EllipseTargetDetector:
         ])
 
 
-def test_paint_no_change_recovery_uses_window_identity_not_goal_text():
+def test_ineffective_ellipse_selection_marks_mandatory_freehand_fallback():
     class Planner:
         def __init__(self):
             self.calls = 0
@@ -98,20 +98,17 @@ def test_paint_no_change_recovery_uses_window_identity_not_goal_text():
                     timeout_seconds=0.05,
                     expected={"screen_changed": {"min_fraction": 0.001}},
                 ))
-            if self.calls == 2:
-                assert len(history) == 1
-                assert not history[0].verified
-                assert "Changed pixels: 0.0%" in history[0].message
-                assert "named target: 'paint.shape.ellipse'" in history[0].message
-                return TaskDecision(step=TaskStep(
-                    action="click",
-                    x=20,
-                    y=20,
-                    timeout_seconds=0.05,
-                    expected={"screen_changed": {"min_fraction": 0.001}},
-                ))
-            assert len(history) == 2 and history[-1].verified
-            return TaskDecision(done=True, success=True, reason="Circle setup and drawing verified.")
+            assert len(history) == 1
+            assert history[0].dispatched and not history[0].verified
+            assert "Changed pixels: 0.0%" in history[0].message
+            assert "ELLIPSE FALLBACK REQUIRED" in history[0].message
+            assert "select the Pencil/Pen tool" in history[0].message
+            # Do not claim the goal is complete before the freehand artwork exists.
+            return TaskDecision(
+                done=True,
+                success=False,
+                reason="The planner must continue with the Pencil fallback.",
+            )
 
     driver = PaintDriver()
     with Computer(driver=driver, accessibility=False) as computer:
@@ -122,12 +119,13 @@ def test_paint_no_change_recovery_uses_window_identity_not_goal_text():
             target_detector=EllipseTargetDetector(),
         ).run("Draw a red circle near the centre of the canvas and verify it.", planner)
 
-    assert result.success
-    assert planner.calls == 3
-    assert driver.clicked == [(40, 30, "left"), (20, 20, "left")]
-    assert len(result.steps) == 2
+    assert not result.success
+    assert result.status == "failed"
+    assert planner.calls == 2
+    assert driver.clicked == [(40, 30, "left")]
+    assert len(result.steps) == 1
+    assert result.steps[0].dispatched
     assert not result.steps[0].verified
-    assert result.steps[1].verified
 
 
 def test_paint_target_alias_resolves_to_unique_current_target():
@@ -411,6 +409,14 @@ class FreehandFallbackPaintDriver(PaintDriver):
         self.mouse_is_down = False
         if self.stroke_points:
             self.stroke_points.append(self.stroke_points[0])
+
+    def draw_path(self, points, button="left", duration_seconds=1.0):
+        self.mouse_down(*points[0], button=button)
+        try:
+            for point in points[1:]:
+                self.move(*point)
+        finally:
+            self.mouse_up(button=button)
 
     def screenshot(self, output=None):
         image = Image.new("RGB", (100, 80), "black")

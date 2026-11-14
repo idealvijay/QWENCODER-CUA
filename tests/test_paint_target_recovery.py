@@ -146,7 +146,10 @@ def test_paint_target_alias_resolves_to_unique_current_target():
                 ))
             assert len(history) == 1
             assert history[0].dispatched and history[0].verified
-            return TaskDecision(done=True, success=True, reason="The ellipse tool was selected.")
+            return TaskDecision(
+                done=True, success=False,
+                reason="Ellipse selection worked, but the circle has not been drawn yet.",
+            )
 
     driver = PaintDriver()
     with Computer(driver=driver, accessibility=False) as computer:
@@ -157,7 +160,8 @@ def test_paint_target_alias_resolves_to_unique_current_target():
             target_detector=EllipseTargetDetector(),
         ).run("Draw a red circle near the centre of the canvas and verify it.", planner)
 
-    assert result.success
+    assert not result.success
+    assert result.status == "failed"
     assert planner.calls == 2
     assert driver.clicked == [(40, 30, "left")]
     assert len(result.steps) == 1
@@ -354,7 +358,8 @@ def test_tiny_shape_tool_highlight_passes_target_selection_verification():
             target_detector=EllipseTargetDetector(),
         ).run("Draw a red circle near the centre of the canvas and verify it.", planner)
 
-    assert result.success
+    assert not result.success
+    assert result.status == "failed"
     assert planner.calls == 2
     assert driver.clicked == [(40, 30, "left")]
     assert len(result.steps) == 1

@@ -154,7 +154,9 @@ def test_paint_stale_target_id_gets_one_fresh_observation_retry():
                     target_id="paint.shape.ellipse",
                     expected={"active_window_title_contains": "Paint"},
                 ))
-            assert len(history) == 1 and history[0].dispatched
+            assert len(history) == 2
+            assert not history[0].dispatched
+            assert history[1].dispatched and history[1].verified
             return TaskDecision(done=True, success=True, reason="The ellipse tool was selected.")
 
     driver = PaintDriver()

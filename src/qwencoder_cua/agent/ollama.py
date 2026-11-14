@@ -14,6 +14,7 @@ from qwencoder_cua.agent.plan import TaskDecision, TaskStep
 from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.models.observation import Observation
 from qwencoder_cua.agent.coordinates import planner_image_dimensions
+from qwencoder_cua.perception import TargetDetector
 
 
 def _normalize_draw_path_points(step_data: dict[str, Any]) -> None:
@@ -79,6 +80,7 @@ Allowed actions:
 - press_key: key (examples: enter, tab, ctrl+c)
 - scroll: dx and/or dy
 - click_element: selector
+- click_target: target_id (an exact ID from available_targets)
 - focus_element: selector
 - set_element_value: selector and value
 - move_mouse: x, y
@@ -154,6 +156,12 @@ Every step MUST include a non-empty expected postcondition. Supported postcondit
 - {"active_window_title_contains": "..."}
 - {"screen_changed": {"min_fraction": 0.01}}
 
+When available_targets contains a suitable named target, prefer click_target with its exact
+target_id instead of estimating x/y. The runner resolves that ID again against a fresh screenshot
+immediately before clicking; never provide coordinates with click_target. If the target is absent
+or confidence is insufficient, use a different visible target or a coordinate click grounded in
+the screenshot. Target IDs are observation-scoped hints, not durable coordinates.
+
 Prefer accessibility selectors with stable automation_id and parent_name. Use screen coordinates
 only when accessibility elements cannot identify the target. Do not invent controls or assume an
 action succeeded; inspect the next observation and plan again. Do not use a no-op title check as
@@ -171,8 +179,14 @@ class OllamaTaskPlanner:
     Default model is qwen2.5-coder:7b. The model returns one structured step at a time.
     """
 
-    def __init__(self, endpoint: str | None = None, model: str | None = None,
-                 timeout_seconds: float = 45.0, num_ctx: int | None = None):
+    def __init__(
+        self,
+        endpoint: str | None = None,
+        model: str | None = None,
+        timeout_seconds: float = 45.0,
+        num_ctx: int | None = None,
+        target_detector: TargetDetector | None = None,
+    ):
         self.endpoint = (endpoint or os.environ.get("OLLAMA_URL", "http://127.0.0.1:11434")).rstrip("/")
         if not self.endpoint.endswith("/api/chat"):
             self.endpoint = self.endpoint + "/chat" if self.endpoint.endswith("/api") else self.endpoint + "/api/chat"
@@ -193,6 +207,7 @@ class OllamaTaskPlanner:
         if not 2048 <= self.num_ctx <= 131072:
             raise ValueError("num_ctx must be between 2048 and 131072 tokens.")
         self.timeout_seconds = timeout_seconds
+        self.target_detector = target_detector or TargetDetector()
 
     def plan_next(self, goal: str, observation: Observation, history: list[Any]) -> TaskDecision:
         elements = [
@@ -204,25 +219,33 @@ class OllamaTaskPlanner:
             }
             for item in observation.elements[:160]
         ]
+        desktop_size = None
+        screen_size = None
+        source_size = None
+        output_size = None
+        if observation.screenshot and observation.screenshot.width and observation.screenshot.height:
+            source_size = (
+                observation.screenshot.width,
+                observation.screenshot.height,
+            )
+            output_size = planner_image_dimensions(*source_size)
+            desktop_size = {"width": source_size[0], "height": source_size[1]}
+            screen_size = {"width": output_size[0], "height": output_size[1]}
+        target_registry = self.target_detector.detect(observation)
         context = {
             "goal": goal,
             "platform": observation.platform,
             "session_type": observation.session_type,
             "active_window": observation.active_window.model_dump() if observation.active_window else None,
             "accessibility_available": observation.accessibility_available,
-            "desktop_size": (
-                {"width": observation.screenshot.width, "height": observation.screenshot.height}
-                if observation.screenshot else None
-            ),
-            "screen_size": (
-                {"width": planner_image_dimensions(
-                    observation.screenshot.width, observation.screenshot.height
-                )[0], "height": planner_image_dimensions(
-                    observation.screenshot.width, observation.screenshot.height
-                )[1]}
-                if observation.screenshot else None
-            ),
+            "desktop_size": desktop_size,
+            "screen_size": screen_size,
             "accessible_elements": elements,
+            "available_targets": target_registry.prompt_context(
+                observation_id=observation.observation_id,
+                source_size=source_size,
+                output_size=output_size,
+            )[:80],
             "completed_steps": [item.model_dump() for item in history[-12:]],
         }
         message = {"role": "user", "content": json.dumps(context, ensure_ascii=False)}
@@ -279,7 +302,7 @@ class OllamaTaskPlanner:
                             # interaction clearly changed the screen. For pointer actions, use
                             # the visual assertion alone. Semantic actions may retain supported
                             # semantic postconditions because those are their intended oracle.
-                            pointer_actions = {"click", "move_mouse", "drag", "draw_path"}
+                            pointer_actions = {"click", "click_target", "move_mouse", "drag", "draw_path"}
                             if step_data.get("action") in pointer_actions:
                                 step_data["expected"] = {
                                     "screen_changed": expected["screen_changed"]

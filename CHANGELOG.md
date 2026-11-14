@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.6.0
+- Add screenshot-scoped named UI targets with accessibility classification, confidence and bounds.
+- Add target registry freshness checks and named `click_target` planning/execution with pre-dispatch re-detection.
+- Add explicit-region colour swatch detection for palette grounding.
+- Add normalized canvas-relative scene models, ordered drawing objects and style metadata.
+- Add deterministic ellipse, cubic Bezier and polygon geometry helpers plus desktop-coordinate scene resolution.
+
 ## 0.5.8
 - Normalize flattened numeric coordinate pairs and two-item coordinate arrays into draw-path point objects.
 - Preserve the 2-64 waypoint validation limit; never truncate oversized paths.

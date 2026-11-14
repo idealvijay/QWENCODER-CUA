@@ -11,7 +11,7 @@ from qwencoder_cua.models.selector import ElementSelector
 PlanAction = Literal[
     "click", "type_text", "press_key", "scroll",
     "click_element", "focus_element", "set_element_value",
-    "move_mouse", "drag", "draw_path",
+    "move_mouse", "drag", "draw_path", "click_target",
 ]
 
 
@@ -29,6 +29,7 @@ class TaskStep(BaseModel):
     key: str | None = None
     value: str | None = None
     selector: ElementSelector | None = None
+    target_id: str | None = None
     start_x: int | None = None
     start_y: int | None = None
     end_x: int | None = None
@@ -60,6 +61,10 @@ class TaskStep(BaseModel):
             raise ValueError("press_key requires key")
         if self.action in {"click_element", "focus_element", "set_element_value"} and self.selector is None:
             raise ValueError(f"{self.action} requires a semantic selector")
+        if self.action == "click_target" and not (self.target_id and self.target_id.strip()):
+            raise ValueError("click_target requires a non-empty target_id")
+        if self.action != "click_target" and self.target_id is not None:
+            raise ValueError("target_id is only valid for click_target")
         if self.action == "set_element_value" and self.value is None:
             raise ValueError("set_element_value requires value")
         return self

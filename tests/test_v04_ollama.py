@@ -902,7 +902,7 @@ def test_prompt_requires_object_waypoints_and_prefers_native_paint_ellipse():
     assert "first try the built-in Ellipse/Oval shape" in normalized
     assert "ELLIPSE FALLBACK REQUIRED" in normalized
     assert "16-24 evenly spaced integer-coordinate waypoints" in normalized
-    assert "actual red circular artwork on the canvas" in normalized
+    assert "requested red circular artwork on the canvas" in normalized
     assert "Never return a flat number list or nested coordinate arrays." in normalized
 
 

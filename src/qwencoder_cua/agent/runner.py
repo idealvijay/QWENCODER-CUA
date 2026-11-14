@@ -216,7 +216,8 @@ class TaskRunner:
                     decision.step, target_hint
                 )
 
-            if freehand_fallbacks and step_to_execute.action == "draw_path":
+            paint_red_circle = self._is_paint_red_circle_task(goal, observation)
+            if paint_red_circle and step_to_execute.action == "draw_path":
                 path_error = self._validate_freehand_circle_path(
                     step_to_execute, observation
                 )
@@ -228,10 +229,10 @@ class TaskRunner:
                         dispatched=False,
                         verified=False,
                         message=(
-                            "FREEHAND CIRCLE PATH REJECTED: " + path_error +
-                            " Rebuild it as a large, smooth, closed circle on the white canvas "
-                            "using 16-24 evenly spaced points. Do not draw a short line or "
-                            "place the points in the toolbar."
+                            "PAINT CIRCLE PATH REJECTED: " + path_error +
+                            " Rebuild it as a large, smooth, closed circle on the drawable "
+                            "canvas using 16-24 evenly spaced points. Do not draw a short line "
+                            "or place the points in the toolbar."
                         ),
                         before_observation_id=observation.observation_id,
                     ))
@@ -239,7 +240,7 @@ class TaskRunner:
                         continue
                     return self._run_result(
                         run_id, goal, False, "failed", history,
-                        "Planner did not produce a valid freehand circle path.", started,
+                        "Planner did not produce a valid Paint circle path.", started,
                     )
                 step_to_execute = self._tune_fallback_draw_verification(step_to_execute)
 
@@ -259,23 +260,34 @@ class TaskRunner:
             step_result = step_runner.execute(
                 step_plan, approve=wrapped_approval, coordinate_space="planner_image",
                 target_hint=target_hint,
-                require_red_draw=bool(freehand_fallbacks and step_to_execute.action == "draw_path"),
+                require_red_draw=bool(
+                    paint_red_circle and step_to_execute.action == "draw_path"
+                ),
             )
             if not step_result.success:
                 if (
-                    freehand_fallbacks
+                    paint_red_circle
                     and step_to_execute.action == "draw_path"
                     and step_result.steps
                     and "new red pixels" in step_result.steps[-1].message.casefold()
                     and red_stroke_replans < max_red_stroke_replans
                 ):
                     red_stroke_replans += 1
+                    failure_message = step_result.steps[-1].message
+                    nonred_match = re.search(
+                        r"(\d+) changed non-red pixels", failure_message.casefold()
+                    )
+                    changed_nonred = int(nonred_match.group(1)) if nonred_match else 0
+                    correction = (
+                        "Undo the last wrong-colour stroke with Ctrl+Z, then select the red "
+                        "foreground swatch in Paint and redraw the smooth closed circle."
+                        if changed_nonred > 0 else
+                        "No visible stroke was detected. Select the red foreground swatch in "
+                        "Paint, then draw the smooth closed circle again."
+                    )
                     failed = step_result.steps[-1].model_copy(update={
                         "message": (
-                            f"{step_result.steps[-1].message} RED STROKE CORRECTION REQUIRED: "
-                            "The fallback stroke was not red. Undo that last stroke with Ctrl+Z, "
-                            "select the red foreground colour from the Paint palette, then draw "
-                            "the same smooth closed circle again with Pencil/Pen or Brush. "
+                            f"{failure_message} RED STROKE CORRECTION REQUIRED: {correction} "
                             "Do not claim success until new red pixels are visible on the canvas."
                         )
                     })
@@ -365,6 +377,18 @@ class TaskRunner:
         return self._run_result(
             run_id, goal, False, "timed_out", history,
             f"Planner did not finish within the {self.policy.max_steps}-step limit.", started,
+        )
+
+    @staticmethod
+    def _is_paint_red_circle_task(
+        goal: str, observation: Observation | None = None
+    ) -> bool:
+        """Identify Paint goals that specifically require a red circle on the canvas."""
+        task = goal.casefold()
+        return (
+            "red" in task
+            and "circle" in task
+            and TaskRunner._is_paint_drawing_task(goal, observation)
         )
 
     @staticmethod
@@ -482,10 +506,17 @@ class TaskRunner:
         old_red = sum(1 for pixel in before_crop.getdata() if is_red(pixel))
         new_red = sum(1 for pixel in after_crop.getdata() if is_red(pixel))
         added = max(0, new_red - old_red)
+        changed_nonred = sum(
+            1
+            for old_pixel, new_pixel in zip(before_crop.getdata(), after_crop.getdata())
+            if max(abs(a - b) for a, b in zip(old_pixel, new_pixel)) >= 16
+            and not is_red(new_pixel)
+        )
         if added < 5:
             return False, (
                 f"No new red pixels were detected in the drawing region "
-                f"({added} added; at least 5 required). Select red before drawing."
+                f"({added} added; at least 5 required; {changed_nonred} changed non-red pixels). "
+                "Select the red foreground swatch, not black, and draw the circle again."
             )
         return True, f"Verified {added} new red pixels in the freehand circle region."
 
@@ -745,7 +776,10 @@ class TaskRunner:
                         verified, message = verify_observation(
                             after, step.expected, previous_screenshot_path=str(before_path)
                         )
-                        if verified and require_red_draw and step.action == "draw_path":
+                        if require_red_draw and step.action == "draw_path":
+                            # Use full-resolution colour evidence as the primary oracle.
+                            # The 64x64 screen-change thumbnail can miss thin strokes even
+                            # when the original capture contains visible red pixels.
                             red_ok, red_message = self._verify_new_red_stroke(
                                 str(before_path), str(after_path), step, before
                             )

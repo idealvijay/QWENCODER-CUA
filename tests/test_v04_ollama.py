@@ -1059,4 +1059,4 @@ def test_planner_repairs_malformed_json_response_once(monkeypatch):
         and "malformed JSON" in item["content"]
     )
     assert "12 words or fewer" in correction
-    assert "previous invalid response" in correction
+    assert "Previous malformed response" in correction

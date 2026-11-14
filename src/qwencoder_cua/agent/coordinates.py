@@ -2,14 +2,17 @@
 
 from __future__ import annotations
 
+PLANNER_IMAGE_MAX_WIDTH = 640
+PLANNER_IMAGE_MAX_HEIGHT = 400
+
 
 def planner_image_dimensions(
     width: int,
     height: int,
-    max_width: int = 1280,
-    max_height: int = 800,
+    max_width: int = PLANNER_IMAGE_MAX_WIDTH,
+    max_height: int = PLANNER_IMAGE_MAX_HEIGHT,
 ) -> tuple[int, int]:
-    """Return the aspect-preserving dimensions used for planner screenshots."""
+    """Return the aspect-preserving, low-resolution dimensions sent to vision planners."""
     if min(width, height, max_width, max_height) <= 0:
         raise ValueError("Screenshot and maximum dimensions must be positive.")
     scale = min(1.0, max_width / width, max_height / height)

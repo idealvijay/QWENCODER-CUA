@@ -619,7 +619,6 @@ class OllamaTaskPlanner:
         try:
             from PIL import Image
             with Image.open(path) as source:
-                image = source.convert("RGB")
                 target_size = planner_image_dimensions(*source.size)
                 # Downsample before making the RGB copy to avoid holding two full-size
                 # decoded RGB frames while preparing the vision request.

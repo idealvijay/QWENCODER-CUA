@@ -1,6 +1,6 @@
 # QWENCODER CUA Driver
 
-**Version 0.5.8** — local-first Python desktop automation for Windows and Linux.
+**Version 0.6.0** — local-first Python desktop automation for Windows and Linux.
 Hybrid perception uses accessibility semantics when available and screenshots as a visual fallback.
 
 ## v0.5 highlights
@@ -16,6 +16,11 @@ Hybrid perception uses accessibility semantics when available and screenshots as
 - **Atomic strokes:** each drag/path attempts to release the pointer button even when movement fails.
 - **Bounded drawing plans:** waypoint count, duration and screenshot-coordinate bounds are validated before input is sent.
 - **Shape path helpers:** generate circle and rectangle polylines for drawing with the currently selected application tool.
+- **Named UI target registry:** assign semantic IDs to visible accessibility targets, retain their bounds/confidence/source, and reject stale screenshot targets.
+- **Named target actions:** MiniCPM can request `click_target` by ID; the runner resolves the target again from a fresh pre-click observation.
+- **Canvas-relative scene model:** describe layered artwork using normalized geometry independent of desktop resolution and window position.
+- **Deterministic geometry:** generate smooth ellipse, cubic Bezier and polygon paths; resolve scene objects against the current canvas bounds.
+- **Palette swatch detector:** locate a requested colour only within an explicitly supplied palette region, avoiding guesses across the whole desktop.
 
 ## Platform status
 
@@ -399,3 +404,25 @@ qwencoder-cua run-goal "Draw a red circle on the current canvas and verify the v
 - The runner enforces action allow-lists, step/runtime/text limits, required postconditions, and explicit approval gates.
 - Wayland input/capture uses only the session and device permissions granted by the desktop portal.
 - UI labels, values, screenshots and model output are untrusted input. Never pass them to shell execution or privileged code.
+
+## Named UI targets and scene planning
+
+The perception layer can turn accessible controls into screenshot-scoped IDs such as
+`paint.shape.ellipse` and `paint.color.red`. The local planner receives an `available_targets`
+list with each target's bounds, centre, confidence and detection source. It can return
+`click_target` with an exact ID; the runner detects the targets again from the fresh
+pre-dispatch screenshot before clicking. Old target coordinates are never replayed blindly.
+
+For visual-only palette controls, `ColorSwatchDetector` can locate a colour inside a
+caller-supplied palette region. The region must be grounded in the current UI observation;
+the detector intentionally does not scan the entire desktop for arbitrary matching pixels.
+
+Artwork can be represented by `ScenePlan` objects using normalized canvas coordinates
+(0 to 1), ordered layers, reusable styles, and ellipse/rectangle/polygon/path primitives.
+`CanvasRegion` resolves those normalized objects to current screen pixels. Cubic Bezier and
+ellipse helpers generate deterministic paths independently of the vision model.
+
+This release provides the target-grounding and scene-geometry foundation. Automated execution
+of a complete multi-object scene in a target application, including style/tool changes and
+per-object visual correction, is the next integration stage; the scene resolver itself does not
+yet draw a whole scene into Paint.

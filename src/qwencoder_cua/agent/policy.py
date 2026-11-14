@@ -14,7 +14,7 @@ class TaskPolicy:
     allowed_actions: frozenset[str] = field(default_factory=lambda: frozenset({
         "click", "type_text", "press_key", "scroll",
         "click_element", "focus_element", "set_element_value",
-        "move_mouse", "drag", "draw_path",
+        "move_mouse", "drag", "draw_path", "click_target",
     }))
     max_path_points: int = 64
     max_draw_duration_seconds: float = 10.0

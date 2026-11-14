@@ -17,7 +17,7 @@ from qwencoder_cua.core.exceptions import CUAError
 from qwencoder_cua.execution.verifier import verify_observation
 from qwencoder_cua.models.observation import Observation
 from qwencoder_cua.agent.coordinates import planner_image_dimensions
-from qwencoder_cua.agent.coordinates import planner_image_dimensions
+from qwencoder_cua.perception import TargetDetector
 
 
 class TaskPlanner(Protocol):
@@ -38,9 +38,10 @@ class TaskRunner:
     part of the plan schema.
     """
 
-    def __init__(self, computer, policy: TaskPolicy | None = None):
+    def __init__(self, computer, policy: TaskPolicy | None = None, target_detector=None):
         self.computer = computer
         self.policy = policy or TaskPolicy()
+        self.target_detector = target_detector or TargetDetector()
 
     def run(self, goal: str, planner: TaskPlanner,
             approve: ApprovalCallback | None = None) -> TaskRunResult:
@@ -92,7 +93,9 @@ class TaskRunner:
                 return self._run_result(run_id, goal, False, "timed_out", history,
                                         "Task exceeded runtime limit.", started)
             step_policy = replace(self.policy, max_steps=1, max_runtime_seconds=max(0.1, remaining))
-            step_runner = TaskRunner(self.computer, step_policy)
+            step_runner = TaskRunner(
+                self.computer, step_policy, target_detector=self.target_detector
+            )
             step_plan = TaskPlan(goal=goal, steps=[decision.step])
             wrapped_approval = None
             if approve is not None:
@@ -110,12 +113,16 @@ class TaskRunner:
                     # planner-image point so the model can inspect the fresh screenshot
                     # without blindly repeating the same click.
                     failed = step_result.steps[-1]
+                    attempted = (
+                        f"planner-image point: ({decision.step.x}, {decision.step.y})"
+                        if decision.step.action == "click"
+                        else f"named target: {decision.step.target_id!r}"
+                    )
                     failed = failed.model_copy(update={
                         "message": (
-                            f"{failed.message} Last attempted planner-image point: "
-                            f"({decision.step.x}, {decision.step.y}). "
+                            f"{failed.message} Last attempted {attempted}. "
                             "This click had no detected visual effect; re-inspect the screen "
-                            "and do not repeat this point."
+                            "and do not repeat the same target or point."
                         )
                     })
                     history.extend([*step_result.steps[:-1], failed])
@@ -142,7 +149,7 @@ class TaskRunner:
             "paint" in task
             and any(word in task for word in ("draw", "circle", "ellipse", "shape", "sketch"))
         )
-        if not is_paint_drawing or step.action != "click":
+        if not is_paint_drawing or step.action not in {"click", "click_target"}:
             return False
         if "screen_changed" not in step.expected or result.status != "failed":
             return False
@@ -214,7 +221,25 @@ class TaskRunner:
             before_path, after_path = Path(before_path_str), Path(after_path_str)
             try:
                 before = self.computer.observe(screenshot_path=before_path)
-                bounds_error = self._validate_pointer_bounds(step, before, coordinate_space)
+                dispatch_step = step
+                dispatch_coordinate_space = coordinate_space
+                try:
+                    if step.action == "click_target":
+                        dispatch_step = self._resolve_target_click(step, before)
+                        dispatch_coordinate_space = "desktop"
+                except Exception as exc:
+                    results.append(TaskStepResult(
+                        step_id=step.step_id, action=step.action, dispatched=False,
+                        verified=False, message=f"Target resolution failed: {exc}",
+                        before_observation_id=before.observation_id,
+                    ))
+                    if plan.stop_on_failure:
+                        return self._result(plan, False, "failed", results,
+                                            "Target resolution failed.", started)
+                    continue
+                bounds_error = self._validate_pointer_bounds(
+                    dispatch_step, before, dispatch_coordinate_space
+                )
                 if bounds_error:
                     results.append(TaskStepResult(
                         step_id=step.step_id, action=step.action, dispatched=False,
@@ -225,10 +250,8 @@ class TaskRunner:
                         return self._result(plan, False, "failed", results, bounds_error, started)
                     continue
                 try:
-                    dispatch_step = (
-                        self._to_desktop_coordinates(step, before)
-                        if coordinate_space == "planner_image" else step
-                    )
+                    if dispatch_coordinate_space == "planner_image":
+                        dispatch_step = self._to_desktop_coordinates(dispatch_step, before)
                     self._dispatch(dispatch_step)
                 except Exception as exc:
                     results.append(TaskStepResult(
@@ -281,6 +304,25 @@ class TaskRunner:
             plan, all_verified, "completed" if all_verified else "failed", results,
             "All steps completed and verified." if all_verified
             else "One or more steps were not verified.", started,
+        )
+
+    def _resolve_target_click(self, step: TaskStep, observation: Observation) -> TaskStep:
+        """Resolve a named target against the fresh pre-dispatch screenshot."""
+        registry = self.target_detector.detect(observation)
+        target = registry.resolve(
+            step.target_id,
+            observation_id=observation.observation_id,
+        )
+        center = target.center
+        return TaskStep(
+            step_id=step.step_id,
+            action="click",
+            x=center.x,
+            y=center.y,
+            button=step.button,
+            expected=step.expected,
+            approval_required=step.approval_required,
+            timeout_seconds=step.timeout_seconds,
         )
 
     def _dispatch(self, step: TaskStep):

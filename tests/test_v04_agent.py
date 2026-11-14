@@ -5,6 +5,9 @@ from qwencoder_cua.agent import TaskDecision, TaskPlan, TaskPolicy, TaskRunner, 
 from qwencoder_cua.core.computer import Computer
 from qwencoder_cua.models.capabilities import DriverCapabilities
 from qwencoder_cua.models.window import WindowInfo
+from qwencoder_cua.models.geometry import Rect
+from qwencoder_cua.models.target import UITarget
+from qwencoder_cua.perception.target_registry import TargetRegistry
 
 
 class FakeDriver:
@@ -231,3 +234,106 @@ def test_closed_loop_limits_no_change_paint_click_recovery_to_one_retry():
     assert planner.calls == 2
     assert len(result.steps) == 2
     assert all(item.dispatched and not item.verified for item in result.steps)
+
+
+
+def test_runner_resolves_named_target_against_fresh_observation():
+    class FixedTargetDetector:
+        def detect(self, observation):
+            return TargetRegistry(observation.observation_id, [
+                UITarget(
+                    target_id="paint.shape.ellipse",
+                    label="Ellipse",
+                    kind="shape",
+                    bounds=Rect(x=20, y=30, width=40, height=20),
+                    observation_id=observation.observation_id,
+                    source="accessibility",
+                    confidence=1.0,
+                )
+            ])
+
+    driver = FakeDriver()
+    with Computer(driver=driver, accessibility=False) as computer:
+        plan = TaskPlan(
+            goal="Select the ellipse tool",
+            steps=[TaskStep(
+                action="click_target",
+                target_id="paint.shape.ellipse",
+                expected={"active_window_title_contains": "Test"},
+            )],
+        )
+        result = TaskRunner(
+            computer, target_detector=FixedTargetDetector()
+        ).execute(plan, coordinate_space="planner_image")
+
+    assert result.success
+    assert result.steps[0].action == "click_target"
+    assert driver.clicked == [(40, 40, "left")]
+
+
+def test_task_step_requires_non_empty_target_id_for_named_click():
+    with pytest.raises(Exception, match="target_id"):
+        TaskStep(
+            action="click_target",
+            expected={"screen_changed": {"min_fraction": 0.001}},
+        )
+    with pytest.raises(Exception, match="target_id"):
+        TaskStep(
+            action="click_target",
+            target_id=" ",
+            expected={"screen_changed": {"min_fraction": 0.001}},
+        )
+
+
+
+def test_iterative_runner_reobserves_after_ineffective_named_paint_target_click():
+    class TrackingTargetDetector:
+        def __init__(self):
+            self.observation_ids = []
+
+        def detect(self, observation):
+            self.observation_ids.append(observation.observation_id)
+            return TargetRegistry(observation.observation_id, [
+                UITarget(
+                    target_id="paint.color.red",
+                    label="Red",
+                    kind="color",
+                    bounds=Rect(x=10, y=10, width=12, height=12),
+                    observation_id=observation.observation_id,
+                    source="accessibility",
+                )
+            ])
+
+    class Planner:
+        def __init__(self):
+            self.calls = 0
+
+        def plan_next(self, goal, observation, history):
+            self.calls += 1
+            if self.calls == 1:
+                return TaskDecision(step=TaskStep(
+                    action="click_target",
+                    target_id="paint.color.red",
+                    timeout_seconds=0.05,
+                    expected={"screen_changed": {"min_fraction": 0.001}},
+                ))
+            assert len(history) == 1
+            assert "Last attempted named target: 'paint.color.red'" in history[0].message
+            return TaskDecision(
+                done=True,
+                success=False,
+                reason="The refreshed screen did not confirm the palette selection.",
+            )
+
+    driver = FakeDriver()
+    detector = TrackingTargetDetector()
+    with Computer(driver=driver, accessibility=False) as computer:
+        planner = Planner()
+        result = TaskRunner(
+            computer, TaskPolicy(max_steps=4), target_detector=detector
+        ).run("Draw a red circle in Paint.", planner)
+
+    assert not result.success
+    assert planner.calls == 2
+    assert len(driver.clicked) == 1
+    assert detector.observation_ids == [result.steps[0].before_observation_id]

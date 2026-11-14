@@ -7,7 +7,7 @@ import io
 import os
 import threading
 from concurrent.futures import TimeoutError as FutureTimeout
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 from typing import Any, Sequence
 
 import psutil
@@ -158,7 +158,7 @@ class CuaDriverBackend(BaseDriver):
             except (psutil.Error, OSError):
                 pass
         launch_path = getattr(app, "launch_path", None) if app is not None else None
-        return Path(launch_path).name if launch_path else None
+        return PureWindowsPath(launch_path).name if launch_path else None
 
     def get_windows(self) -> list[WindowInfo]:
         self._require_connected()

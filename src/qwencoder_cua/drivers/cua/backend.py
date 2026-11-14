@@ -77,7 +77,7 @@ class CuaDriverBackend(BaseDriver):
         if self._startup_error is not None:
             raise DriverUnavailableError(
                 'Could not start Cua Driver. Install the optional dependency with '
-                'pip install -e ".[windows,cua]". '
+                'pip install -e ".[cua]". '
                 f"Underlying error: {self._startup_error}"
             ) from self._startup_error
         self._connected = True

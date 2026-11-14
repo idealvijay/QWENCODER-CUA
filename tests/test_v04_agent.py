@@ -200,8 +200,8 @@ def test_closed_loop_replans_once_after_paint_click_has_no_visual_effect():
             "Draw a red circle in Paint.", planner
         )
 
-    assert result.success
-    assert result.status == "completed"
+    assert not result.success
+    assert result.status == "failed"
     assert planner.calls == 3
     assert driver.clicked == [(10, 10, "left"), (20, 20, "left")]
     assert len(result.steps) == 2

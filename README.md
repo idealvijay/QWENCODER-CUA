@@ -301,6 +301,24 @@ The Ollama planner may emit `move_mouse`, `drag` or `draw_path` steps. MiniCPM s
 
 For drawing and canvas goals, `run-goal` automatically binds to a single visible `mspaint.exe` window when Paint is open, so `--process-name mspaint.exe` is not required. If multiple Paint windows are open, it uses the active one; if several are open and none is active, it asks for an explicit `--window-id`. Explicit `--window-id`, `--process-name` and `--window-title` options always override auto-detection. If Paint is not open, the command keeps its normal desktop targeting behaviour.
 
+### Experimental Cua Driver backend
+
+QWENCODER can run the same planner through the optional Rust-backed Cua Driver SDK. This backend owns window discovery, window-scoped screenshots, Windows UI Automation tokens and native input. The existing QWENCODER native backend remains the default.
+
+Install the optional SDK:
+
+```bat
+python -m pip install -e ".[cua]"
+```
+
+Run a Paint goal through Cua Driver (Paint is still auto-detected):
+
+```bat
+qwencoder-cua run-goal "Draw a red circle near the centre of the canvas and verify it." --backend cua
+```
+
+The integration is experimental. It currently supports window discovery/capture, snapshot-bound UIA clicks, coordinate clicks, drags, keyboard input and scroll. The typed Cua Driver Python API exposes Windows drawing as drag gestures rather than a held-button path, so QWENCODER currently approximates `draw_path` with short contiguous drag segments; joins may be visible in some applications. Use the native backend when continuous freehand pointer motion is important, and compare both backends before changing the default. The adapter is pinned to the Cua Driver 0.49.x API surface until compatibility is tested against later releases.
+
 For Paint circles, the planner first tries the built-in Ellipse/Oval tool. When that selection cannot be dispatched or verified—or the planner itself says it is switching to freehand—the runner records a mandatory fallback: stop retrying Ellipse, select Pencil/Pen (or Brush if Pencil/Pen is unavailable), select red, and draw a smooth closed circle with `draw_path`. The runner rejects undersized, open, highly elongated or non-circular paths before dispatch for every Paint red-circle `draw_path`, even when the planner skips the Ellipse step entirely. After drawing, it checks for new red pixels in the original-resolution stroke region, so the 64x64 thumbnail cannot hide a thin stroke; a black or otherwise incorrect-colour stroke is rejected and the planner is asked to undo it, select red, and redraw. For a Paint drawing request, selecting a tool or changing a toolbar highlight is not completion: the runner requires a verified `drag` or `draw_path` before it accepts a successful terminal decision, and the planner must visually inspect the canvas for the requested red circle. One malformed planner JSON response receives a single correction attempt.
 
 Example request after opening Paint and placing it in the foreground:

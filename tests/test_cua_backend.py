@@ -85,6 +85,7 @@ class FakeRuntime:
     def __init__(self):
         self.click_requests = []
         self.drag_requests = []
+        self.scroll_requests = []
         self.window_state_requests = []
         self.closed = False
 
@@ -192,7 +193,8 @@ class FakeRuntime:
     async def press_key(self, _request):
         return SimpleNamespace(is_error=False, text="pressed")
 
-    async def scroll(self, _request):
+    async def scroll(self, request):
+        self.scroll_requests.append(request)
         return SimpleNamespace(is_error=False, text="scrolled")
 
     async def shutdown(self):
@@ -337,6 +339,24 @@ def test_cua_backend_draw_path_uses_native_drag_operations(monkeypatch):
         assert (calls[0].to_x, calls[0].to_y) == (20.0, 20.0)
         assert (calls[1].from_x, calls[1].from_y) == (20.0, 20.0)
         assert (calls[1].to_x, calls[1].to_y) == (30.0, 10.0)
+    finally:
+        driver.disconnect()
+
+
+def test_cua_backend_scroll_preserves_both_axes(monkeypatch):
+    driver, sdk = _backend(monkeypatch)
+    driver.connect()
+    try:
+        driver.scroll(dx=3, dy=2)
+        driver.scroll(dx=-4, dy=-5)
+
+        calls = sdk.CuaDriver.runtime.scroll_requests
+        assert [(call.direction, call.amount) for call in calls] == [
+            ("right", 3),
+            ("up", 2),
+            ("left", 4),
+            ("down", 5),
+        ]
     finally:
         driver.disconnect()
 

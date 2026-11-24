@@ -1,6 +1,7 @@
 # Changelog
 
 ## Unreleased
+- Preserve simultaneous horizontal and vertical scroll input in the experimental Cua Driver backend.
 - Add an opt-in experimental Cua Driver backend (0.49.x Python SDK) for window-scoped capture, UIA element tokens, and native input; retain the QWENCODER native backend as default.
 - Automatically target a single visible Microsoft Paint window for drawing/canvas goals; prefer the active Paint window when multiple are open, and retain explicit window-selection CLI options as overrides.
 - Validate every Paint red-circle `draw_path`, even when the planner skips Ellipse fallback; reject short, open, elongated or irregular paths before dispatch.
